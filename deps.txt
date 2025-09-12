@@ -1,0 +1,7 @@
+# Dependencies for IronCrypt
+nmap
+gobuster
+# Optional: ffuf (install via Go if not in package repo)
+# Optional: masscan (only if practicing in lab, very careful)
+# Optional: ffuf via Go
+# Wordlists: rockyou.txt (if you have it locally), else instructions to download

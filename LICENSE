@@ -1,0 +1,46 @@
+
+---
+
+# Scripts (with “IronCrypt” name)
+
+Below are the scripts in `bin/`. Make sure to `chmod +x` them.
+
+---
+
+## bin/ironcrypt.sh (main menu / launcher)
+
+```bash
+#!/usr/bin/env bash
+# ironcrypt.sh - main launcher for IronCrypt
+
+BASEDIR="$(cd "$(dirname "$0")" && pwd)"
+clear
+cat <<'BANNER'
+=====================================
+   IronCrypt — Recon CLI Tool
+   Features: Port scan, Web enum
+   Other options: Coming soon
+=====================================
+BANNER
+
+PS3="Select an option (1-6): "
+options=(
+  "Port scan (nmap)"
+  "Web enumeration (ffuf/gobuster)"
+  "DDOS (coming soon)"
+  "XSS automation (coming soon)"
+  "Other (coming soon)"
+  "Exit"
+)
+
+select opt in "${options[@]}"; do
+  case "$REPLY" in
+    1) "$BASEDIR/scan_ports.sh" ; break ;;
+    2) "$BASEDIR/web_enum.sh" ; break ;;
+    3) "$BASEDIR/ddos_stub.sh" ; break ;;
+    4) "$BASEDIR/xss_stub.sh" ; break ;;
+    5) "$BASEDIR/other_stub.sh" ; break ;;
+    6) echo "Goodbye from IronCrypt." ; exit 0 ;;
+    *) echo "Invalid option. Choose 1-6." ;;
+  esac
+done
