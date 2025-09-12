@@ -64,5 +64,5 @@ Only run scans or tests against systems you own or have **explicit written permi
 1. Clone or copy the project folder, e.g.:
 
    ```bash
-   git clone <your-repo-url> IronCrypt
+   git clone https://github.com/Master-Panpour/Tool.git IronCrypt
    cd IronCrypt
