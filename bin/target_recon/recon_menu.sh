@@ -65,7 +65,7 @@ while true; do
       7) clear; printf "${GREEN}Running: Traceroute...${RESET}\n"; sleep 1; bash "$BASEDIR/recon_tools.sh" traceroute; break ;;
       8) clear; printf "${GREEN}Running: Quick Nmap scan...${RESET}\n"; sleep 1; bash "$BASEDIR/recon_tools.sh" nmap_quick; break ;;
       9) clear; printf "${MAGENTA}Shodan (optional)...${RESET}\n"; sleep 1; bash "$BASEDIR/recon_tools.sh" shodan; break ;;
-      10) printf "${CYAN}Returning to main menu...${RESET}\n"; sleep 1; return 0 ;;
+      10) printf "${CYAN}Returning to main menu...${RESET}\n"; sleep 1; exit 0 ;;
       *) printf "${MAGENTA}Invalid choice. Choose 1-${#options[@]}.${RESET}\n"; sleep 1; break ;;
     esac
   done
