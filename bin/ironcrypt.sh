@@ -70,7 +70,7 @@ while true; do
         clear
         printf "${GREEN}Opening Web Enumeration Options...${RESET}\n"
         sleep 1
-        bash "$BASEDIR/web_enum/run_web_menu.sh"
+        bash "$BASEDIR/web_enum/web_menu.sh"
         break
         ;;
       4)
