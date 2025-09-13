@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# target_recon.sh - Target reconnaissance menu for IronCrypt
+# recon_menu.sh - Target Recon Menu for IronCrypt
 # Copyright (C) 2025 Master_Panpour
 #
 # This program is free software: you can redistribute it and/or modify
@@ -15,6 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+# ANSI colors
 RESET="\033[0m"
 BOLD="\033[1m"
 RED="\033[1;31m"
@@ -23,8 +24,10 @@ GREEN="\033[1;32m"
 YELLOW="\033[1;33m"
 MAGENTA="\033[1;35m"
 
+# Directory of this script
 BASEDIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Banner
 print_banner() {
   clear
   printf "${RED}${BOLD}=====================================\n"
@@ -33,6 +36,7 @@ print_banner() {
   printf "${CYAN}Choose a recon action (tools will prompt before running).${RESET}\n\n"
 }
 
+# Options
 options=(
   "IP / Host basic info (geo, ASN)"
   "DNS lookups (dig)"
@@ -46,9 +50,10 @@ options=(
   "Back to Main"
 )
 
+# Menu loop
 while true; do
   print_banner
-  PS3="${YELLOW}Select (1-${#options[@]}): ${RESET}"
+  PS3="${MAGENTA}Select (1-${#options[@]}): ${RESET}"
   select opt in "${options[@]}"; do
     case "$REPLY" in
       1) clear; printf "${GREEN}Running: IP / Host basic info...${RESET}\n"; sleep 1; bash "$BASEDIR/recon_tools.sh" ipinfo; break ;;
@@ -61,7 +66,7 @@ while true; do
       8) clear; printf "${GREEN}Running: Quick Nmap scan...${RESET}\n"; sleep 1; bash "$BASEDIR/recon_tools.sh" nmap_quick; break ;;
       9) clear; printf "${MAGENTA}Shodan (optional)...${RESET}\n"; sleep 1; bash "$BASEDIR/recon_tools.sh" shodan; break ;;
       10) printf "${CYAN}Returning to main menu...${RESET}\n"; sleep 1; return 0 ;;
-      *) printf "${YELLOW}Invalid choice. Choose 1-${#options[@]}.${RESET}\n"; sleep 1; break ;;
+      *) printf "${MAGENTA}Invalid choice. Choose 1-${#options[@]}.${RESET}\n"; sleep 1; break ;;
     esac
   done
 done
