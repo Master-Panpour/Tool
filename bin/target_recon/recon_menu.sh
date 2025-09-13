@@ -48,7 +48,7 @@ while true; do
   PS3="${YELLOW}Select an option (1-${#options[@]}): ${RESET}"
   select opt in "${options[@]}"; do
     case "$REPLY" in
-      1) clear; printf "${GREEN}Launching: Target Recon...${RESET}\n"; sleep 1; bash "$BASEDIR/target_recon.sh"; break ;;
+      1) clear; printf "${GREEN}Launching: Target Recon...${RESET}\n"; sleep 1; bash "$BASEDIR/target_recon/recon_menu.sh"; break ;;
       2) clear; printf "${GREEN}Opening Port Scanning Options...${RESET}\n"; sleep 1; bash "$BASEDIR/portscans/scan_menu.sh"; break ;;
       3) clear; printf "${GREEN}Opening Web Enumeration Options...${RESET}\n"; sleep 1; bash "$BASEDIR/web_enum/web_menu.sh"; break ;;
       4) clear; printf "${MAGENTA}DDOS feature: coming soon (placeholder)${RESET}\n"; sleep 1; break ;;
