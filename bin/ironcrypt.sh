@@ -49,7 +49,7 @@ options=(
 # Main menu loop
 while true; do
   print_banner
-  PS3="${YELLOW}Select an option (1-${#options[@]}): ${RESET}"
+  PS3="${MAGENTA}Select an option (1-${#options[@]}): ${RESET}"
   select opt in "${options[@]}"; do
     case "$REPLY" in
       1)
@@ -91,7 +91,7 @@ while true; do
         exit 0
         ;;
       *)
-        printf "${YELLOW}Invalid option. Choose 1-${#options[@]}.${RESET}\n"
+        printf "${MAGENTA}Invalid option. Choose 1-${#options[@]}.${RESET}\n"
         sleep 1
         break
         ;;
