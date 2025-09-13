@@ -1,45 +1,31 @@
 #!/usr/bin/env bash
 # run_port_scans.sh - executes the selected port scan types
+# Copyright (C) 2025 Master_Panpour
+# GPLv3: Free software, no warranty
 
-   #!/bin/bash
-   # Copyright (C) 2025 Master_Panpour
-   #
-   # This program is free software: you can redistribute it and/or modify
-   # it under the terms of the GNU General Public License as published by
-   # the Free Software Foundation, either version 3 of the License, or
-   # (at your option) any later version.
-   #
-   # This program is distributed in the hope that it will be useful,
-   # but WITHOUT ANY WARRANTY; without even the implied warranty of
-   # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-   # GNU General Public License for more details.
-   #
-   # You should have received a copy of the GNU General Public License
-   # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+# Colors
+RESET="\033[0m"
+GREEN="\033[1;32m"
+YELLOW="\033[1;33m"
+RED="\033[1;31m"
+CYAN="\033[1;36m"
 
-TARGET="$1"
-# Actually the first argument here is the first scan option name, so better to shift
-# But we expect TARGET to be provided as first positional later
-# Let's parse
+# Get target
+read -rp "$(printf "${CYAN}Enter target IP/hostname (default: 127.0.0.1): ${RESET}")" TARGET
+TARGET=${TARGET:-127.0.0.1}
 
-# First positional is target
-if [ $# -lt 2 ]; then
-  read -rp "Enter target IP/hostname (default: 127.0.0.1): " TARGET
-  TARGET=${TARGET:-127.0.0.1}
-  # The rest of arguments are scan type names
-  # But our call from scan_menu.sh: args are scan options only. So we need to also include TARGET
-  # For simplicity, assume args are scan options only
-  SCAN_SELECTED=("${@:1}")  
-else
-  TARGET="$1"
-  SCAN_SELECTED=("${@:2}")
+# Remaining arguments are scan types
+SCAN_SELECTED=("$@")
+
+if [ "${#SCAN_SELECTED[@]}" -eq 0 ]; then
+    echo "${YELLOW}[!] No scan types selected. Exiting.${RESET}"
+    exit 1
 fi
 
-echo "[IronCrypt][PortScans] Target: $TARGET"
-echo "[IronCrypt][PortScans] Selected scan types: ${SCAN_SELECTED[*]}"
+echo "${CYAN}[IronCrypt][PortScans] Target: $TARGET${RESET}"
+echo "${CYAN}[IronCrypt][PortScans] Selected scan types: ${SCAN_SELECTED[*]}${RESET}"
 
-# Check for incompatible scan types: more than one TCP scan among them?
-# Define array of TCP scan types
+# Check incompatible TCP scans
 tcp_scans_flags=(
   "TCP Connect (-sT)"
   "SYN Scan (-sS)"
@@ -51,44 +37,47 @@ tcp_scans_flags=(
 
 count_tcp=0
 for opt in "${SCAN_SELECTED[@]}"; do
-  for tcp in "${tcp_scans_flags[@]}"; do
-    if [ "$opt" == "$tcp" ]; then
-      ((count_tcp++))
-    fi
-  done
+    for tcp in "${tcp_scans_flags[@]}"; do
+        if [ "$opt" == "$tcp" ]; then
+            ((count_tcp++))
+        fi
+    done
 done
 
 if [ "$count_tcp" -gt 1 ]; then
-  echo "[!] Error: You selected more than one TCP scan type. Only one TCP scan type is allowed per run."
-  exit 1
+    echo "${RED}[!] Error: More than one TCP scan type selected. Only one allowed per run.${RESET}"
+    exit 1
 fi
 
-# Build nmap flags
-flags=()
-
+# Map scan options to nmap flags
+declare -a flags
 for opt in "${SCAN_SELECTED[@]}"; do
-  case "$opt" in
-    "TCP Connect (-sT)") flags+=("-sT") ;;
-    "SYN Scan (-sS)") flags+=("-sS") ;;
-    "NULL Scan (-sN)") flags+=("-sN") ;;
-    "FIN Scan (-sF)") flags+=("-sF") ;;
-    "Xmas Scan (-sX)") flags+=("-sX") ;;
-    "ACK Scan (-sA)") flags+=("-sA") ;;
-    "UDP Scan (-sU)") flags+=("-sU") ;;
-    *) echo "[!] Warning: Unknown scan option: $opt" ;;
-  esac
+    case "$opt" in
+        "TCP Connect (-sT)") flags+=("-sT") ;;
+        "SYN Scan (-sS)") flags+=("-sS") ;;
+        "NULL Scan (-sN)") flags+=("-sN") ;;
+        "FIN Scan (-sF)") flags+=("-sF") ;;
+        "Xmas Scan (-sX)") flags+=("-sX") ;;
+        "ACK Scan (-sA)") flags+=("-sA") ;;
+        "UDP Scan (-sU)") flags+=("-sU") ;;
+        *) echo "${YELLOW}[!] Warning: Unknown scan option: $opt${RESET}" ;;
+    esac
 done
 
-# Add service version detection by default
+# Add service version detection
 flags+=("-sV")
 
-# Construct output prefix
+# Output prefix
 OUT_PREFIX="ironcrypt_ports_${TARGET//[:\/]/-}_$(date +%Y%m%d%H%M%S)"
 
-echo "[IronCrypt][PortScans] Running nmap with flags: ${flags[*]} on $TARGET"
-echo "[!] Ensure you have permission. Root may be required for some flags."
+# Run nmap scan
+echo "${GREEN}[IronCrypt][PortScans] Running nmap with flags: ${flags[*]} on $TARGET${RESET}"
+echo "${YELLOW}[!] Ensure you have permission. Root may be required for some flags.${RESET}"
 
-# Run scan
 nmap -Pn "${flags[@]}" -p- -oA "$OUT_PREFIX" "$TARGET"
 
-echo "[IronCrypt][PortScans] Scan complete. Outputs: ${OUT_PREFIX}.nmap ${OUT_PREFIX}.gnmap ${OUT_PREFIX}.xml"
+echo "${GREEN}[IronCrypt][PortScans] Scan complete.${RESET}"
+echo "${CYAN}Outputs: ${OUT_PREFIX}.nmap ${OUT_PREFIX}.gnmap ${OUT_PREFIX}.xml${RESET}"
+
+# Pause before returning
+read -rp "$(printf "${CYAN}Press Enter to return to scan menu...${RESET}")" _

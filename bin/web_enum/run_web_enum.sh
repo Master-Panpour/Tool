@@ -23,7 +23,6 @@ echo -e "${CYAN}[IronCrypt][WebEnum] Selected category: $CATEGORY${RESET}"
 
 case "$CATEGORY" in
   "dir")
-    # Directory/File brute-force
     read -rp "Enter wordlist path (default: $DEFAULT_WORDLIST): " WORDLIST
     WORDLIST=${WORDLIST:-$DEFAULT_WORDLIST}
 
@@ -45,13 +44,14 @@ case "$CATEGORY" in
 
   "subdomains")
     echo -e "${GREEN}[IronCrypt][WebEnum] Running Subdomain Enumeration...${RESET}"
+    HOST=$(echo "$TARGET" | sed 's|https://||; s|http://||')
     if command -v sublist3r >/dev/null 2>&1; then
-      OUT="ironcrypt_sublist3r_$(echo "$TARGET" | sed 's/[:\/]/_/g')_$(date +%s).txt"
-      sublist3r -d "$(echo "$TARGET" | sed 's|https://||; s|http://||')" -o "$OUT"
+      OUT="ironcrypt_sublist3r_${HOST}_$(date +%s).txt"
+      sublist3r -d "$HOST" -o "$OUT"
       echo -e "${GREEN}[IronCrypt][WebEnum] Completed. Output: $OUT${RESET}"
     elif command -v assetfinder >/dev/null 2>&1; then
-      OUT="ironcrypt_assetfinder_$(echo "$TARGET" | sed 's|https://||; s|http://||')_$(date +%s).txt"
-      assetfinder "$(echo "$TARGET" | sed 's|https://||; s|http://||')" > "$OUT"
+      OUT="ironcrypt_assetfinder_${HOST}_$(date +%s).txt"
+      assetfinder "$HOST" > "$OUT"
       echo -e "${GREEN}[IronCrypt][WebEnum] Completed. Output: $OUT${RESET}"
     else
       echo -e "${RED}[!] Neither sublist3r nor assetfinder installed.${RESET}"
@@ -99,3 +99,7 @@ case "$CATEGORY" in
     exit 1
     ;;
 esac
+
+# Pause after each tool
+echo
+read -rp "Press Enter to return to Web Enumeration menu..." _

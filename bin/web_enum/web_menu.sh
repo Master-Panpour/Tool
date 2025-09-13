@@ -1,19 +1,8 @@
 #!/usr/bin/env bash
-# web_menu.sh - Web Enumeration Menu for IronCrypt (optimized + full tools)
+# web_menu.sh - Web Enumeration Menu for IronCrypt (optimized + pause)
 # Copyright (C) 2025 Master_Panpour
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+# GPLv3: Free software, no warranty.
 
 # ANSI color variables
 RESET="\033[0m"
@@ -51,7 +40,7 @@ web_options=(
 # Menu loop
 while true; do
   print_banner
-  PS3="${MAGENTA}Select (1-${#web_options[@]}): ${RESET}"
+  PS3="${YELLOW}Select (1-${#web_options[@]}): ${RESET}"
   select opt in "${web_options[@]}"; do
     case "$REPLY" in
       1)
@@ -59,6 +48,8 @@ while true; do
         printf "${GREEN}Starting: Directory brute-force...${RESET}\n"
         sleep 1
         bash "$BASEDIR/run_web_enum.sh" "dir"
+        echo
+        read -rp "Press Enter to return to Web Enumeration menu..." _
         break
         ;;
       2)
@@ -66,6 +57,8 @@ while true; do
         printf "${GREEN}Starting: Subdomain enumeration...${RESET}\n"
         sleep 1
         bash "$BASEDIR/run_web_enum.sh" "subdomains"
+        echo
+        read -rp "Press Enter to return to Web Enumeration menu..." _
         break
         ;;
       3)
@@ -73,6 +66,8 @@ while true; do
         printf "${GREEN}Starting: HTTP headers analysis...${RESET}\n"
         sleep 1
         bash "$BASEDIR/run_web_enum.sh" "headers"
+        echo
+        read -rp "Press Enter to return to Web Enumeration menu..." _
         break
         ;;
       4)
@@ -80,12 +75,15 @@ while true; do
         printf "${GREEN}Starting: CMS detection...${RESET}\n"
         sleep 1
         bash "$BASEDIR/run_web_enum.sh" "cms"
+        echo
+        read -rp "Press Enter to return to Web Enumeration menu..." _
         break
         ;;
       5)
         clear
         printf "${MAGENTA}Virtual hosts enumeration: Coming soon.${RESET}\n"
         sleep 1
+        read -rp "Press Enter to return to Web Enumeration menu..." _
         break
         ;;
       6)
@@ -93,6 +91,8 @@ while true; do
         printf "${GREEN}Starting: SSL/TLS info...${RESET}\n"
         sleep 1
         bash "$BASEDIR/run_web_enum.sh" "ssl"
+        echo
+        read -rp "Press Enter to return to Web Enumeration menu..." _
         break
         ;;
       7)
