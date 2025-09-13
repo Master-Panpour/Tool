@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ironcrypt.sh - main launcher for IronCrypt
+# target_recon.sh - Target reconnaissance menu for IronCrypt
 # Copyright (C) 2025 Master_Panpour
 #
 # This program is free software: you can redistribute it and/or modify
@@ -15,7 +15,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-# ANSI color variables
 RESET="\033[0m"
 BOLD="\033[1m"
 RED="\033[1;31m"
@@ -29,32 +28,40 @@ BASEDIR="$(cd "$(dirname "$0")" && pwd)"
 print_banner() {
   clear
   printf "${RED}${BOLD}=====================================\n"
-  printf "   IronCrypt — Recon CLI Tool\n"
+  printf "   IronCrypt — Target Recon Menu\n"
   printf "=====================================\n${RESET}"
-  printf "${CYAN}Port scanning & Web enumeration — organized, student lab tool${RESET}\n\n"
+  printf "${CYAN}Choose a recon action (tools will prompt before running).${RESET}\n\n"
 }
 
 options=(
-  "Target Recon"
-  "Port Scanning Options"
-  "Web Enumeration Options"
-  "DDOS (coming soon)"
-  "XSS automation (coming soon)"
-  "Exit"
+  "IP / Host basic info (geo, ASN)"
+  "DNS lookups (dig)"
+  "Whois (domain/IP ownership)"
+  "HTTP headers (curl -I)"
+  "SSL/TLS cert info (openssl)"
+  "Ping"
+  "Traceroute"
+  "Quick Nmap (top ports)"
+  "Shodan (requires API key - optional)"
+  "Back to Main"
 )
 
 while true; do
   print_banner
-  PS3="${YELLOW}Select an option (1-${#options[@]}): ${RESET}"
+  PS3="${YELLOW}Select (1-${#options[@]}): ${RESET}"
   select opt in "${options[@]}"; do
     case "$REPLY" in
-      1) clear; printf "${GREEN}Launching: Target Recon...${RESET}\n"; sleep 1; bash "$BASEDIR/target_recon/recon_menu.sh"; break ;;
-      2) clear; printf "${GREEN}Opening Port Scanning Options...${RESET}\n"; sleep 1; bash "$BASEDIR/portscans/scan_menu.sh"; break ;;
-      3) clear; printf "${GREEN}Opening Web Enumeration Options...${RESET}\n"; sleep 1; bash "$BASEDIR/web_enum/web_menu.sh"; break ;;
-      4) clear; printf "${MAGENTA}DDOS feature: coming soon (placeholder)${RESET}\n"; sleep 1; break ;;
-      5) clear; printf "${MAGENTA}XSS automation: coming soon (placeholder)${RESET}\n"; sleep 1; break ;;
-      6) clear; printf "${CYAN}Goodbye from IronCrypt.${RESET}\n"; exit 0 ;;
-      *) printf "${YELLOW}Invalid option. Choose 1-${#options[@]}.${RESET}\n"; sleep 1; break ;;
+      1) clear; printf "${GREEN}Running: IP / Host basic info...${RESET}\n"; sleep 1; bash "$BASEDIR/recon_tools.sh" ipinfo; break ;;
+      2) clear; printf "${GREEN}Running: DNS lookups (dig)...${RESET}\n"; sleep 1; bash "$BASEDIR/recon_tools.sh" dig; break ;;
+      3) clear; printf "${GREEN}Running: Whois...${RESET}\n"; sleep 1; bash "$BASEDIR/recon_tools.sh" whois; break ;;
+      4) clear; printf "${GREEN}Running: HTTP headers...${RESET}\n"; sleep 1; bash "$BASEDIR/recon_tools.sh" headers; break ;;
+      5) clear; printf "${GREEN}Running: SSL/TLS cert info...${RESET}\n"; sleep 1; bash "$BASEDIR/recon_tools.sh" ssl; break ;;
+      6) clear; printf "${GREEN}Running: Ping...${RESET}\n"; sleep 1; bash "$BASEDIR/recon_tools.sh" ping; break ;;
+      7) clear; printf "${GREEN}Running: Traceroute...${RESET}\n"; sleep 1; bash "$BASEDIR/recon_tools.sh" traceroute; break ;;
+      8) clear; printf "${GREEN}Running: Quick Nmap scan...${RESET}\n"; sleep 1; bash "$BASEDIR/recon_tools.sh" nmap_quick; break ;;
+      9) clear; printf "${MAGENTA}Shodan (optional)...${RESET}\n"; sleep 1; bash "$BASEDIR/recon_tools.sh" shodan; break ;;
+      10) printf "${CYAN}Returning to main menu...${RESET}\n"; sleep 1; return 0 ;;
+      *) printf "${YELLOW}Invalid choice. Choose 1-${#options[@]}.${RESET}\n"; sleep 1; break ;;
     esac
   done
 done
