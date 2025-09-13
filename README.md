@@ -67,15 +67,17 @@ Only run scans or tests against systems you own or have **explicit written permi
    ```bash
    sudo apt update
    sudo apt install -y nmap whois dnsutils curl openssl traceroute jq
-# for web enumeration: install gobuster or ffuf (ffuf can be installed via `go install github.com/ffuf/ffuf/v2@latest`)
+for web enumeration: install gobuster or ffuf (ffuf can be installed via `go install github.com/ffuf/ffuf/v2@latest`)
 3. **Make the helper executable and preview/apply permissions:**
    ```bash
    chmod +x required_perms.sh
-# preview (no changes)
+preview (no changes)
+   ```bash
    ./required_perms.sh --dry
-# apply permissions
+apply permissions
+   ```bash
    ./required_perms.sh
-# enable safe git-based auto-update check during run (opt-in)
+enable safe git-based auto-update check during run (opt-in)
    AUTO_UPDATE=1 ./required_perms.sh
 
 ---
