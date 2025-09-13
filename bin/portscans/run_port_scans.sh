@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
 # run_port_scans.sh - executes the selected port scan types
 
+   #!/bin/bash
+   # Copyright (C) 2025 Master_Panpour
+   #
+   # This program is free software: you can redistribute it and/or modify
+   # it under the terms of the GNU General Public License as published by
+   # the Free Software Foundation, either version 3 of the License, or
+   # (at your option) any later version.
+   #
+   # This program is distributed in the hope that it will be useful,
+   # but WITHOUT ANY WARRANTY; without even the implied warranty of
+   # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   # GNU General Public License for more details.
+   #
+   # You should have received a copy of the GNU General Public License
+   # along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 TARGET="$1"
 # Actually the first argument here is the first scan option name, so better to shift
 # But we expect TARGET to be provided as first positional later
