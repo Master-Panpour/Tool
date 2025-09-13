@@ -19,34 +19,34 @@ It provides organized, menu-driven workflows for **target reconnaissance**, **po
 
 ---
 
-## Project layout
-
-IronCrypt/
-├── README.md
-├── LICENSE
-├── deps.txt
-├── .gitignore
-├── required_perms.sh # make scripts executable + optional auto-update
-├── bin/
-│ ├── ironcrypt.sh
-│ ├── ddos_stub.sh
-│ ├── xss_stub.sh
-│ ├── other_stub.sh
-│ ├── portscans/
-│ │ ├── scan_menu.sh
-│ │ └── run_port_scans.sh
-│ ├── web_enum/
-│ │ ├── web_menu.sh
-│ │ └── run_web_enum.sh
-│ └── target_recon/
-│ ├── recon_menu.sh
-│ └── recon_tools.sh
-├── wordlists/
-│ ├── small.txt
-│ └── rockyou.txt # large — keep out of git or use Git LFS / external host
-└── docs/
-├── USAGE.md
-└── SCAN_TYPES.md
+## Project layout:
+   
+   IronCrypt/
+   ├── README.md
+   ├── LICENSE
+   ├── deps.txt
+   ├── .gitignore
+   ├── required_perms.sh # make scripts executable + optional auto-update
+   ├── bin/
+   │ ├── ironcrypt.sh
+   │ ├── ddos_stub.sh
+   │ ├── xss_stub.sh
+   │ ├── other_stub.sh
+   │ ├── portscans/
+   │ │ ├── scan_menu.sh
+   │ │ └── run_port_scans.sh
+   │ ├── web_enum/
+   │ │ ├── web_menu.sh
+   │ │ └── run_web_enum.sh
+   │ └── target_recon/
+   │ ├── recon_menu.sh
+   │ └── recon_tools.sh
+   ├── wordlists/
+   │ ├── small.txt
+   │ └── rockyou.txt # large — keep out of git or use Git LFS / external host
+   └── docs/
+   ├── USAGE.md
+   └── SCAN_TYPES.md
 
 ---
 
@@ -71,13 +71,11 @@ for web enumeration: install gobuster or ffuf (ffuf can be installed via `go ins
 3. **Make the helper executable and preview/apply permissions:**
    ```bash
    chmod +x required_perms.sh
-preview (no changes)
-   ```bash
+   #preview (no changes)
    ./required_perms.sh --dry
-apply permissions
-   ```bash
+   #apply permissions
    ./required_perms.sh
-enable safe git-based auto-update check during run (opt-in)
+   #enable safe git-based auto-update check during run (opt-in)
    AUTO_UPDATE=1 ./required_perms.sh
 
 ---
