@@ -15,7 +15,7 @@ It provides organized, menu-driven workflows for **target reconnaissance**, **po
 
 > Run IronCrypt only in lab/CTF environments or on systems you own and have explicit written permission to test. Unauthorized scanning or attacks are illegal.
 
-**Notes / authoritative references:** Nmap is used for port/service/version detection, ffuf is the fast web fuzzer used for directory discovery, SecLists is the recommended curated collection of wordlists, Kali provides a `wordlists` package containing `rockyou.txt.gz`, and to record executable bit changes in git use `git update-index --chmod=+x`. :contentReference[oaicite:0]{index=0}
+**Notes / authoritative references:** Nmap is used for port/service/version detection, ffuf is the fast web fuzzer used for directory discovery, SecLists is the recommended curated collection of wordlists, Kali provides a `wordlists` package containing `rockyou.txt.gz`, and to record executable bit changes in git use `git update-index --chmod=+x`.
 
 ---
 
