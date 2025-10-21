@@ -43,7 +43,7 @@ It provides organized, menu-driven workflows for **target reconnaissance**, **po
    │ └── recon_tools.sh
    ├── wordlists/
    │ ├── small.txt
-   │ └── rockyou.txt # large — keep out of git or use Git LFS / external host
+   │ └── rockyou.txt # download by yourself
    └── docs/
    ├── USAGE.md
    └── SCAN_TYPES.md</pre>
