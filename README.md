@@ -63,11 +63,13 @@ Only run scans or tests against systems you own or have **explicit written permi
    ```bash
    git clone https://github.com/Master-Panpour/Tool.git IronCrypt
    cd IronCrypt
+
 2. **Install dependencies:**
    ```bash
    sudo apt update
    sudo apt install -y nmap whois dnsutils curl openssl traceroute jq
 for web enumeration: install gobuster or ffuf (ffuf can be installed via `go install github.com/ffuf/ffuf/v2@latest`)
+
 3. **Make the helper executable and preview/apply permissions:**
 <pre>chmod +x required_perms.sh 
 # Preview (no changes) 
