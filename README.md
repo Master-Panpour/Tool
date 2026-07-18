@@ -121,6 +121,24 @@ NO_COLOR=1 ./aegiscope
 
 Animation and color are automatically suppressed in non-interactive output and CI.
 
+### Header and animation implementation
+
+The terminal branding is dependency-free Bash in `lib/core.sh`. It uses ANSI escape sequences through `printf`, with magenta for IronCrypt, cyan for Aegiscope and menu choices, yellow for prompts and the transition arrow, and blue for section labels. `AEGISCOPE_BANNER_STYLE` dispatches to one of three renderers: `classic`, `shield`, or `minimal`.
+
+On the first interactive render, `ui_brand_animation` clears and redraws the terminal through seven frames, sleeping 70 milliseconds between frames:
+
+```text
+I
+IR
+IRON
+IRONCRYPT
+IRONCRYPT  →
+IRONCRYPT  →  AEGIS
+IRONCRYPT  →  AEGISCOPE
+```
+
+The animation runs only when standard output is a terminal. It is skipped when `NO_ANIMATION=1`, when `CI=true`, or when output is redirected. Color follows the `NO_COLOR` convention and can be enabled in automated tests with `AEGISCOPE_FORCE_COLOR=1`. The **Environment & design** menu previews and switches all three header styles for the current session.
+
 ## Results and development
 
 Every run is written below `results/` with its manifest and evidence. The cross-run database is `results/workspace/assets.db`; authentication profiles are protected under `results/workspace/auth/`. Reports are drafts until automated findings are manually validated and the strict quality gate passes. Copy [the report-profile example](config/report_profile.example.json), supply the real engagement metadata, and protect the entire results tree as sensitive assessment data.
