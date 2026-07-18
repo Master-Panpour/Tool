@@ -101,7 +101,7 @@ PY
   grep -q 'subfinder:.*-oJ.*-cs' "$MOCK_LOG"
   grep -q 'subfinder:.*-rls crtsh=2/s' "$MOCK_LOG"
   grep -q 'httpx:.*-rl 15.*-tech-detect.*-json' "$MOCK_LOG"
-  run_dir="$(find "$AEGISCOPE_RESULTS_ROOT" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+  run_dir="$(find "$AEGISCOPE_RESULTS_ROOT" -mindepth 1 -maxdepth 1 -type d -name '*web-subdomains' -print -quit)"
   [ -s "$run_dir/subdomains.jsonl" ]
   [ -s "$run_dir/subdomains.txt" ]
   grep -Fx 'outside.example.net' "$run_dir/subdomains.txt"
@@ -149,7 +149,7 @@ PY
   mock_testssl
   run "$PROJECT_ROOT/bin/aegiscope" web --target https://localhost --mode tls --authorized
   [ "$status" -eq 0 ]
-  run_dir="$(find "$AEGISCOPE_RESULTS_ROOT" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+  run_dir="$(find "$AEGISCOPE_RESULTS_ROOT" -mindepth 1 -maxdepth 1 -type d -name '*web-tls' -print -quit)"
   [ -s "$run_dir/testssl.json" ]
   [ -s "$run_dir/testssl.html" ]
   grep -q 'testssl:.*localhost:443' "$MOCK_LOG"
@@ -160,7 +160,7 @@ PY
   mock_httpx_capture
   run "$PROJECT_ROOT/bin/aegiscope" recon --target https://localhost --stage all --request-rate 10 --authorized
   [ "$status" -eq 0 ]
-  run_dir="$(find "$AEGISCOPE_RESULTS_ROOT" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+  run_dir="$(find "$AEGISCOPE_RESULTS_ROOT" -mindepth 1 -maxdepth 1 -type d -name '*recon-all' -print -quit)"
   [ -d "$run_dir/01-server-fingerprint" ]
   [ -d "$run_dir/02-metafiles" ]
   [ -d "$run_dir/03-applications" ]
@@ -274,7 +274,7 @@ PY
   [ "$status" -eq 0 ]
   grep -q 'curl:.*--data-urlencode existing=AEGISCOPE_CANARY_' "$MOCK_LOG"
   grep -q 'curl:.*--data-urlencode user=AEGISCOPE_CANARY_' "$MOCK_LOG"
-  run_dir="$(find "$AEGISCOPE_RESULTS_ROOT" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+  run_dir="$(find "$AEGISCOPE_RESULTS_ROOT" -mindepth 1 -maxdepth 1 -type d -name '*xss-reflection' -print -quit)"
   grep -Fx 'existing' "$run_dir/xss-discovered-parameters.txt"
   grep -Fx 'user' "$run_dir/xss-discovered-parameters.txt"
   [ -s "$run_dir/xss-results.jsonl" ]
@@ -286,7 +286,7 @@ PY
   run "$PROJECT_ROOT/bin/aegiscope" load --target https://localhost --duration 5 --request-rate 10 --concurrency 2 --engine hey --authorized
   [ "$status" -eq 0 ]
   grep -q 'hey:.*-z 5s.*-q 5.*-c 2.*-o csv' "$MOCK_LOG"
-  run_dir="$(find "$AEGISCOPE_RESULTS_ROOT" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+  run_dir="$(find "$AEGISCOPE_RESULTS_ROOT" -mindepth 1 -maxdepth 1 -type d -name '*load-hey' -print -quit)"
   [ -s "$run_dir/hey-results.csv" ]
   grep -q '"operation": "load-hey"' "$run_dir/manifest.json"
 }
@@ -296,7 +296,7 @@ PY
   run "$PROJECT_ROOT/bin/aegiscope" ddos --target https://localhost/api --duration 2 --request-rate 4 --concurrency 2 --engine hey --method POST --header 'Authorization: Bearer test-secret' --body '{"probe":true}' --max-error-rate 1 --p95-ms 100 --authorized
   [ "$status" -eq 0 ]
   grep -q 'hey:.*-m POST.*-H Authorization: Bearer test-secret.*-d {"probe":true}' "$MOCK_LOG"
-  run_dir="$(find "$AEGISCOPE_RESULTS_ROOT" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+  run_dir="$(find "$AEGISCOPE_RESULTS_ROOT" -mindepth 1 -maxdepth 1 -type d -name '*load-hey' -print -quit)"
   grep -q '"passed":true' "$run_dir/load-assessment.json"
   grep -q '"method":"POST"' "$run_dir/load-plan.json"
   grep -q 'REDACTED' "$run_dir/manifest.json"
