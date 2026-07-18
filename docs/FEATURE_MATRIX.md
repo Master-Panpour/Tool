@@ -1,27 +1,37 @@
 # IronCrypt Aegiscope implementation matrix
 
-This matrix audits the requested roadmap against the implementation.
+This matrix maps the requested roadmap to implemented behavior and regression coverage.
 
-| Requested capability | Implementation | Verification |
+| Capability | Implementation | Verification |
 |---|---|---|
-| Unique IronCrypt startup product name | IronCrypt Aegiscope / `aegiscope` | CLI version and branding tests |
-| Quick/full TCP, UDP-top, firewall-map and custom profiles | `aegiscope ports --profile ...` | Bats profile tests |
-| Normal discovery; advanced `-Pn` | Default excludes `-Pn`; explicit `--skip-host-discovery` | Bats argument tests |
-| Gobuster VHost discovery | `web --mode vhost`, append-domain and bounded delay | Bats VHost test |
-| Gobuster DNS discovery | `web --mode dns` | Bats DNS test |
-| Enhanced ffuf | Auto-calibration, rate/time, recursion, headers, redaction, JSON/HTML/CSV/all | Bats ffuf test |
-| Subfinder → httpx | Source-attributed JSONL, jq extraction and structured enrichment | Bats pipeline test |
-| testssl.sh | JSON/HTML output with OpenSSL/Nmap fallbacks | Bats TLS test |
-| HTTP analysis | Redirects, status, server hints, cookies, security headers, advertised methods | Bats HTTP test |
-| OWASP information-gathering stages | Network, intel, server, metafiles, apps, entry points, paths, architecture | Bats directory-layout test |
-| Results and manifests | Unique UTC run directories, commands, versions, status and artifacts | Bats manifest tests |
-| Non-interactive CLI | `recon`, `ports`, `web`, `xss`, `load`, `doctor`, `report`, `compare`, `update` | Help and command tests |
-| Authorized scope and rate ceiling | Exact/wildcard/CIDR scope plus authorization assertion and global ceiling | Scope/rate Bats tests |
-| DDoS category | Bounded single-source k6/hey/curl workflow with methods, auth headers, redacted bodies, error/p95 thresholds and JSON plans/results | Bats load, custom-request and cap tests |
-| XSS category | Harmless-canary GET/POST discovery, form/query extraction, encoding/context evidence, DOM indicators and JSONL; no payload execution | Bats XSS and discovery tests |
-| Extensive colored menu | Seven top-level categories with nested category/profile menus | Forced-color menu test |
-| Extra versatility | DNS discovery, Shodan/IPinfo evidence and run comparison | Pipeline and comparison tests |
-| Updater correction | Check-only branch comparison; no remote replacement/execution | Static review and help |
-| Shell quality | Bash syntax, ShellCheck, shfmt, mocked Bats and Linux CI | CI workflow and local checks |
+| IronCrypt product identity | IronCrypt Aegiscope, command `aegiscope`, versioned branding | CLI and banner tests |
+| Three header designs and transition | Classic, shield, minimal; one-time `IRONCRYPT` -> `AEGISCOPE` TTY animation | Forced-color/non-animation Bats test |
+| Systematic menu | Ten top-level categories with focused submenus | Menu smoke test |
+| TCP/UDP/firewall/custom profiles | `ports --profile quick-tcp|full-tcp|udp-top|firewall-map|custom` | Profile argument tests |
+| Normal discovery and advanced `-Pn` | Default omits `-Pn`; `--skip-host-discovery` adds it explicitly | Nmap argument tests |
+| ffuf integration | Calibration, rate/time limits, recursion, headers, JSON/HTML/CSV/all | ffuf mock test |
+| Gobuster modes | Directory fallback plus bounded DNS and VHost discovery | Gobuster mode tests |
+| Asset workspace | SQLite runs, assets, observations, edges, and findings | Asset/dashboard Bats test |
+| Asset queries | Kind, text, port, technology, JSON | CLI/database test |
+| Relationships and history | Text/DOT graph, run-to-run diff, `--since`, evidence linkage | Graph/diff paths and Bats test |
+| Portable dashboard | Runs, findings, assets, edges, evidence paths in one HTML file | Dashboard Bats test |
+| Phased pipeline | Subfinder -> dnsx -> Naabu -> Nmap -> httpx -> Katana | Complete pipeline Bats test |
+| Resume, retry and cache | Per-tool checkpoints, target-locked resume, credential cache namespace, preserved manifest/plan/failure history | Resume/retry/recovery Bats tests |
+| Pipeline completeness | Required missing tools fail automation; Nmap scans the resolved in-scope host list | Dependency and Nmap-list tests |
+| Subfinder/httpx enrichment | Source-attributed JSONL, global/provider rates, derived-host scope filtering, status, title, technologies, IP/CNAME | Pipeline ingestion/scope test |
+| API reconnaissance | OpenAPI/Swagger JSON or YAML, Postman JSON, Burp XML, discovery, GraphQL capability, CORS evidence | OpenAPI/Postman/CORS Bats tests |
+| Nuclei validation | Unsigned disabled, conservative exclusions, rate ceiling, stored responses, optional exact template digest, version evidence | Policy, normalization, pin/mismatch tests |
+| testssl.sh | JSON/HTML output with OpenSSL/Nmap fallback | TLS mock test |
+| HTTP analysis | Redirect/status/server/cookie/security headers and correctly labelled advertised methods | HTTP mock test |
+| OWASP stages | Server, metafiles, applications, entry points, paths, architecture | Stage directory-layout test |
+| Credential profiles | Mode-0600 files; redacted list/show; integrations receive headers without logging secrets | Credential Bats test |
+| Plugin adapters | Reviewed local contract: check, build, execute, normalize, artifacts | Sample `http-head` plugin test |
+| XSS analysis | Harmless canary only, query/form discovery, context/encoding/DOM evidence, JSONL | XSS tests |
+| Load resilience | Bounded k6/hey/curl, auth/method/body, p95/error thresholds, hard caps; no distributed flooding | Load and cap tests |
+| Structured evidence | Versioned manifests, scope snapshot, authorization assertion, redacted execution ledger, per-command status/timeline, artifact size/SHA-256 | Manifest/integrity tests |
+| Enterprise reports | Markdown, print-ready HTML, JSON, findings CSV, engagement profiles, executive/technical sections and strict readiness gate | Formal report, tamper and validation tests |
+| Non-interactive operation | `recon`, `pipeline`, `resume`, `retry`, `ports`, `web`, `api`, `validate`, `assets`, `auth`, `plugins`, `xss`, `load`, `doctor`, `report`, `compare`, `diff`, `update` | Help and command tests |
+| Guardrails | Scope file, explicit assertion, global rate ceiling, safe updater behavior | Scope/rate/update tests |
+| Shell/Python quality | Bash syntax, ShellCheck, shfmt, Python compile, mocked Bats, Linux CI | CI workflow |
 
-Legal caution: Aegiscope assumes authorized professional use. Operators remain responsible for written authorization, scope, rate limits, applicable law, and handling assessment data.
+Legal caution: operators remain responsible for written authorization, assessment scope, rate selection, applicable law, and secure evidence handling.

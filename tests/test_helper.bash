@@ -64,14 +64,18 @@ mock_subfinder_pipeline() {
 if [[ "${1:-}" == "--version" ]]; then echo 'subfinder mock 1.0'; exit 0; fi
 printf 'subfinder:%s\n' "$*" >>"$MOCK_LOG"
 while (($#)); do
-  if [[ "$1" == "-o" ]]; then printf '{"host":"app.lab.example.com","source":"crtsh"}\n' >"$2"; break; fi
+  if [[ "$1" == "-o" ]]; then
+    printf '{"host":"app.lab.example.com","source":"crtsh"}\n' >"$2"
+    printf '{"host":"outside.example.net","source":"crtsh"}\n' >>"$2"
+    break
+  fi
   shift
 done
 EOF
   cat >"${MOCK_BIN}/jq" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "--version" ]]; then echo 'jq mock 1.0'; exit 0; fi
-printf 'app.lab.example.com\n'
+printf 'app.lab.example.com\noutside.example.net\n'
 EOF
   cat >"${MOCK_BIN}/httpx" <<'EOF'
 #!/usr/bin/env bash
@@ -118,10 +122,30 @@ if [[ -n "$output" && "$output" != /dev/null ]]; then
   printf '<html><a href="/login">Login</a><form action="/submit"><input name="user"></form></html>\n' >"$output"
 fi
 if [[ -n "$write_out" ]]; then
-  printf 'final_url=https://localhost/home\nstatus=200\nremote_ip=127.0.0.1\ntls_verify=0\nredirects=1\n'
+  printf 'final_url=https://localhost\nstatus=301\nremote_ip=127.0.0.1\ntls_verify=0\nredirects_followed=0\n'
 fi
 EOF
   chmod +x "${MOCK_BIN}/curl"
+}
+
+mock_httpx_capture() {
+  cat >"${MOCK_BIN}/httpx" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then echo 'httpx mock 1.0'; exit 0; fi
+printf 'httpx:%s\n' "$*" >>"$MOCK_LOG"
+printf '{"url":"https://localhost","status_code":200,"title":"Lab","tech":["nginx"]}\n'
+EOF
+  chmod +x "${MOCK_BIN}/httpx"
+}
+
+mock_httpx_failure() {
+  cat >"${MOCK_BIN}/httpx" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then echo 'httpx mock 1.0'; exit 0; fi
+printf 'httpx:%s\n' "$*" >>"$MOCK_LOG"
+exit 4
+EOF
+  chmod +x "${MOCK_BIN}/httpx"
 }
 
 mock_testssl() {
@@ -149,4 +173,94 @@ printf 'response-time,DNS+dialup,DNS,Request-write,Response-delay,Response-read,
 printf '0.010,0.001,0.001,0.001,0.005,0.002,200,0.010\n'
 EOF
   chmod +x "${MOCK_BIN}/hey"
+}
+
+mock_advanced_pipeline() {
+  mock_nmap
+  cat >"${MOCK_BIN}/subfinder" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then echo 'subfinder mock 1.0'; exit 0; fi
+printf 'subfinder:%s\n' "$*" >>"$MOCK_LOG"
+while (($#)); do
+  if [[ "$1" == "-o" ]]; then printf '{"host":"app.lab.example.com","source":"crtsh"}\n' >"$2"; break; fi
+  shift
+done
+EOF
+  cat >"${MOCK_BIN}/dnsx" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then echo 'dnsx mock 1.0'; exit 0; fi
+printf 'dnsx:%s\n' "$*" >>"$MOCK_LOG"
+while (($#)); do
+  if [[ "$1" == "-o" ]]; then printf '{"host":"app.lab.example.com","a":["127.0.0.1"]}\n' >"$2"; break; fi
+  shift
+done
+EOF
+  cat >"${MOCK_BIN}/naabu" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then echo 'naabu mock 1.0'; exit 0; fi
+printf 'naabu:%s\n' "$*" >>"$MOCK_LOG"
+while (($#)); do
+  if [[ "$1" == "-o" ]]; then printf '{"host":"app.lab.example.com","ip":"127.0.0.1","port":443}\n' >"$2"; break; fi
+  shift
+done
+EOF
+  cat >"${MOCK_BIN}/httpx" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then echo 'httpx mock 1.0'; exit 0; fi
+printf 'httpx:%s\n' "$*" >>"$MOCK_LOG"
+while (($#)); do
+  if [[ "$1" == "-o" ]]; then printf '{"url":"https://app.lab.example.com","host":"app.lab.example.com","status_code":200,"tech":["nginx"]}\n' >"$2"; break; fi
+  shift
+done
+EOF
+  cat >"${MOCK_BIN}/katana" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then echo 'katana mock 1.0'; exit 0; fi
+printf 'katana:%s\n' "$*" >>"$MOCK_LOG"
+while (($#)); do
+  if [[ "$1" == "-o" ]]; then printf '{"url":"https://app.lab.example.com/admin"}\n' >"$2"; break; fi
+  shift
+done
+EOF
+  cat >"${MOCK_BIN}/jq" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then echo 'jq mock 1.0'; exit 0; fi
+input="${@: -1}"
+case "$input" in
+  *subfinder.jsonl|*dnsx.jsonl) printf 'app.lab.example.com\n' ;;
+  *naabu.jsonl) printf '443\n' ;;
+  *httpx.jsonl) printf 'https://app.lab.example.com\n' ;;
+esac
+EOF
+  chmod +x "${MOCK_BIN}/subfinder" "${MOCK_BIN}/dnsx" "${MOCK_BIN}/naabu" "${MOCK_BIN}/httpx" "${MOCK_BIN}/katana" "${MOCK_BIN}/jq"
+}
+
+mock_katana_fail_once() {
+  cat >"${MOCK_BIN}/katana" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then echo 'katana mock 1.0'; exit 0; fi
+printf 'katana:%s\n' "$*" >>"$MOCK_LOG"
+if [[ ! -f "${TEST_WORK}/katana-failed-once" ]]; then
+  touch "${TEST_WORK}/katana-failed-once"
+  exit 3
+fi
+while (($#)); do
+  if [[ "$1" == "-o" ]]; then printf '{"url":"https://app.lab.example.com/admin"}\n' >"$2"; break; fi
+  shift
+done
+EOF
+  chmod +x "${MOCK_BIN}/katana"
+}
+
+mock_nuclei() {
+  cat >"${MOCK_BIN}/nuclei" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then echo 'nuclei mock 1.0'; exit 0; fi
+printf 'nuclei:%s\n' "$*" >>"$MOCK_LOG"
+while (($#)); do
+  if [[ "$1" == "-o" ]]; then printf '{"template-id":"exposure-test","matched-at":"https://localhost/debug","info":{"name":"Exposure","severity":"high"}}\n' >"$2"; break; fi
+  shift
+done
+EOF
+  chmod +x "${MOCK_BIN}/nuclei"
 }

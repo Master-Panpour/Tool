@@ -1,0 +1,41 @@
+{
+  "engagement_name": "External Attack Surface Assessment",
+  "client": "Example Organization",
+  "assessment_type": "Authorized external reconnaissance and validation",
+  "classification": "CONFIDENTIAL",
+  "report_version": "1.0",
+  "report_status": "Draft",
+  "assessors": [
+    "Lead Tester Name"
+  ],
+  "authorization_reference": "Statement of Work / Rules of Engagement reference",
+  "executive_summary": "Summarize what was assessed, the most important validated exposure, business relevance, and the overall remediation direction in plain language.",
+  "strategic_recommendations": [
+    "Validate and prioritize externally exploitable findings using business context.",
+    "Assign accountable remediation owners and target dates.",
+    "Perform a focused retest and preserve evidence of closure."
+  ],
+  "objectives": [
+    "Identify externally observable assets, services, technologies, and security-relevant conditions within the authorized scope.",
+    "Provide reproducible evidence and prioritized, manually validated remediation guidance."
+  ],
+  "methodology": [
+    "OWASP Web Security Testing Guide information gathering and reporting",
+    "NIST SP 800-115 technical security testing and assessment",
+    "Client-approved rules of engagement"
+  ],
+  "limitations": [
+    "Testing was limited to the targets and window defined in the rules of engagement.",
+    "No social engineering, physical testing, destructive activity, or distributed denial-of-service testing was performed.",
+    "Authenticated coverage was limited to the credentials supplied by the client."
+  ],
+  "assumptions": [
+    "The supplied scope and credentials were complete and accurate during the assessment window."
+  ],
+  "distribution": [
+    "Client security leadership",
+    "Client remediation owners",
+    "Authorized assessment team"
+  ],
+  "finding_overrides": {}
+}

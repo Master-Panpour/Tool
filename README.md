@@ -1,26 +1,35 @@
 # IronCrypt Aegiscope
 
-IronCrypt Aegiscope is the authorized reconnaissance and enumeration product in the IronCrypt startup family. The name combines **aegis** (protection) with **scope** (the explicit boundary of a security assessment). Its command is `aegiscope`.
+IronCrypt Aegiscope is a personal, authorization-first reconnaissance workspace for red-team and security-assessment use. It coordinates established tools, normalizes their evidence into a SQLite asset model, and preserves exact run metadata for repeatable analysis.
 
-> Aegiscope assumes authorized professional use. Operate only within applicable law, written authorization, and the configured assessment scope.
+> Use Aegiscope only within applicable law, written authorization, and the configured assessment scope.
 
-## Capabilities
+## Release status
 
+The current release is **Aegiscope 0.4.0**. The repository quality gate covers Bash syntax, ShellCheck, shfmt, Python compilation, JSON validation, executable permissions, and 46 mocked Bats integration tests. The mocked suite validates orchestration and evidence handling without scanning live targets; operators should still complete an authorized lab acceptance run with their installed external-tool versions before production use.
+
+## What it provides
+
+- A phased pipeline: Subfinder -> dnsx -> Naabu -> Nmap -> httpx -> Katana, with passive, verification, and active phases.
+- Checkpoints, failed-step retry, credential-aware cache TTLs, preserved resume history, phase-policy evidence, and target-locked resumable runs.
+- A persistent SQLite asset workspace containing domains, IPs, services, URLs, technologies, findings, observations, and relationships.
+- Asset queries by kind, port, technology, or text; relationship graphs; historical diffs; and a portable HTML dashboard.
 - Nmap profiles: `quick-tcp`, `full-tcp`, `udp-top`, `firewall-map`, and constrained `custom` scans.
-- Normal Nmap host discovery by default; `--skip-host-discovery` enables the advanced `-Pn` override.
-- Directory enumeration with ffuf auto-calibration, rate/time limits, recursion, headers, and JSON/HTML/CSV output; Gobuster is the fallback.
-- Gobuster VHost discovery with a rate-limited single worker.
-- Gobuster DNS discovery for controlled hostname enumeration.
-- Subfinder JSONL with source attribution, followed by httpx status/title/technology enrichment.
-- HTTP redirect, server, cookie, security-header, and advertised-method analysis.
-- Optional testssl.sh JSON/HTML TLS analysis with verified OpenSSL and Nmap fallbacks.
-- OWASP WSTG-aligned reconnaissance stages: server fingerprinting, metafiles, application enumeration, entry points, execution paths, and architecture.
-- Network basics plus optional Shodan/IPinfo intelligence.
-- Context-aware XSS discovery using harmless unique canaries, query/form parameter discovery, raw-versus-encoded punctuation checks, response context evidence, DOM source/sink indicators, and JSONL results.
-- Bounded, single-source DDoS/load-resilience testing through k6, hey, or curl with custom methods, authentication headers, request bodies, error-rate thresholds, p95 latency thresholds, and structured plans/results. Distributed flooding is not provided.
-- Per-run result directories containing artifacts and a JSON manifest with target, scope, commands, versions, timestamps, exit status, and artifact paths.
-- Non-interactive `recon`, `ports`, `web`, `xss`, `load`, `doctor`, `report`, `compare`, and check-only `update` commands.
-- A colored nested menu with reconnaissance, port, web, application-security, resilience, reporting, and maintenance categories. Set `NO_COLOR=1` to disable color.
+- Normal Nmap host discovery by default, with `--skip-host-discovery` as the advanced `-Pn` override.
+- ffuf auto-calibration, request/time limits, recursion, protected headers, and JSON/HTML/CSV output.
+- Gobuster directory, DNS, and VHost discovery.
+- Subfinder source-attributed JSONL with global/per-provider limits and in-scope filtering, followed by httpx status, title, technology, server, IP, and CNAME enrichment.
+- HTTP redirect, status, server, cookie, security-header, and advertised-method analysis.
+- API inventory from OpenAPI, Swagger, Postman, and Burp exports; safe specification discovery, GraphQL capability probing, and CORS evidence.
+- Nuclei validation with unsigned templates disabled, conservative default exclusions, optional reviewed-template SHA-256 pinning, template-version evidence, rate limits, and stored responses.
+- Optional testssl.sh JSON/HTML TLS analysis with OpenSSL and Nmap fallbacks.
+- OWASP WSTG-aligned stages: server fingerprinting, metafiles, application enumeration, entry points, execution paths, and architecture.
+- Harmless-canary XSS reflection analysis with parameter discovery, encoding/context evidence, DOM indicators, and JSONL results.
+- Bounded single-source load-resilience testing using k6, hey, or curl, with hard duration/rate/concurrency/request caps. Distributed flooding is not implemented.
+- Protected local authentication-header profiles and a reviewed plugin adapter contract.
+- Versioned run manifests containing the authorization assertion, scope snapshot, exact redacted commands, per-command timestamps/exit codes, tool versions, and SHA-256 evidence inventory.
+- Enterprise report bundles in Markdown, print-ready HTML, JSON, and findings CSV, with engagement profiles, executive/technical sections, evidence verification, and strict final-report readiness gates.
+- An extensive category/subcategory menu with classic, shield, and minimal IronCrypt-to-Aegiscope header designs.
 
 ## Setup
 
@@ -31,24 +40,16 @@ chmod +x required_perms.sh
 ./required_perms.sh
 ```
 
-Install the core and recommended Debian/Ubuntu packages:
+Core Debian/Ubuntu packages:
 
 ```bash
 sudo apt update
-sudo apt install -y bash curl nmap openssl jq dnsutils whois traceroute gobuster
+sudo apt install -y bash curl python3 python3-yaml sqlite3 nmap openssl jq dnsutils whois traceroute gobuster
 ```
 
-Optional integrations follow their official installation instructions:
+Optional integrations use their official installation instructions: [ffuf](https://github.com/ffuf/ffuf), [Subfinder](https://docs.projectdiscovery.io/opensource/subfinder/install), [dnsx](https://docs.projectdiscovery.io/opensource/dnsx/install), [Naabu](https://docs.projectdiscovery.io/opensource/naabu/install), [httpx](https://docs.projectdiscovery.io/opensource/httpx/install), [Katana](https://docs.projectdiscovery.io/opensource/katana/install), [Nuclei](https://docs.projectdiscovery.io/opensource/nuclei/install), [testssl.sh](https://github.com/testssl/testssl.sh), [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/), and [hey](https://github.com/rakyll/hey).
 
-- [ffuf](https://github.com/ffuf/ffuf)
-- [Subfinder](https://docs.projectdiscovery.io/opensource/subfinder/install)
-- [httpx](https://docs.projectdiscovery.io/opensource/httpx/install)
-- [testssl.sh](https://github.com/testssl/testssl.sh)
-- [Gobuster](https://github.com/OJ/gobuster)
-- [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/)
-- [hey](https://github.com/rakyll/hey)
-
-Check the local environment:
+Check what is available:
 
 ```bash
 ./aegiscope doctor
@@ -56,7 +57,7 @@ Check the local environment:
 
 ## Authorized scope
 
-Edit `config/authorized_scope.txt`. It accepts exact hosts, wildcard domains, and IPv4 CIDRs:
+Edit `config/authorized_scope.txt`. It supports exact hosts, wildcard domains, and IPv4 CIDRs:
 
 ```text
 app.lab.example.com
@@ -64,62 +65,74 @@ app.lab.example.com
 192.0.2.0/24
 ```
 
-Targets outside this file are rejected. Non-interactive jobs must also pass `--authorized` to assert that written authorization exists. The full interactive menu displays a legal-use caution and treats a subsequent scan selection as the same assertion. The default scope only permits localhost.
+Targets outside the scope file are rejected. Direct commands also require `--authorized`; this asserts written authorization but never bypasses scope. The global request ceiling defaults to 100 and can be lowered with `AEGISCOPE_MAX_RATE`.
 
-## Examples
+## Quick examples
 
 ```bash
+# Phased reconnaissance and continuation
+./aegiscope pipeline --target lab.example.com --phase passive --request-rate 20 --authorized
+./aegiscope pipeline --target lab.example.com --phase all --request-rate 20 --provider-rate-limits 'shodan=2/s' --authorized
+./aegiscope resume results/<pipeline-run> --target lab.example.com --phase all --authorized
+./aegiscope retry results/<pipeline-run> --failed-only --target lab.example.com --phase all --authorized
+
+# Asset intelligence
+./aegiscope assets list --port 443
+./aegiscope assets list --technology nginx --json
+./aegiscope assets graph app.lab.example.com --format dot
+./aegiscope diff --since 7d
+./aegiscope assets dashboard --output results/aegiscope-dashboard.html
+
+# Port and web work
 ./aegiscope ports --target 127.0.0.1 --profile quick-tcp --authorized
-./aegiscope ports --target 192.0.2.10 --profile udp-top --request-rate 50 --authorized
 ./aegiscope ports --target app.lab.example.com --profile custom --scan-type syn --ports 22,80,443 --service-detection --authorized
-
-./aegiscope web --target https://app.lab.example.com --mode http --authorized
-./aegiscope web --target https://app.lab.example.com --mode dir --request-rate 25 --recursion-depth 1 --output-format all --authorized
-./aegiscope web --target https://app.lab.example.com --mode vhost --wordlist wordlists/vhosts-small.txt --authorized
-./aegiscope web --target lab.example.com --mode dns --authorized
+./aegiscope web --target https://app.lab.example.com --mode dir --request-rate 20 --recursion-depth 1 --output-format all --authorized
+./aegiscope web --target https://app.lab.example.com --mode vhost --authorized
 ./aegiscope web --target lab.example.com --mode subdomains --authorized
-./aegiscope web --target https://app.lab.example.com --mode tech --authorized
-./aegiscope web --target https://app.lab.example.com --mode tls --authorized
 
-./aegiscope recon --target https://app.lab.example.com --stage all --authorized
-./aegiscope recon --target app.lab.example.com --stage intel --authorized
-./aegiscope xss --target 'https://app.lab.example.com/search?q=term' --discover-parameters --authorized
-./aegiscope ddos --target https://app.lab.example.com/api --duration 10 --request-rate 10 --concurrency 2 --method POST --header 'Authorization: Bearer TOKEN' --body '{"probe":true}' --max-error-rate 5 --p95-ms 1000 --authorized
+# Protected authentication and API recon
+./aegiscope auth add --name staging --from-file ./private-headers.txt
+./aegiscope api --target https://app.lab.example.com --import collection.json --format postman --cors --auth-profile staging --authorized
+
+# Signed/pinned validation
+digest="$(python3 lib/workspace.py --db results/workspace/assets.db fingerprint --path ./reviewed-templates)"
+./aegiscope validate --target https://app.lab.example.com --templates ./reviewed-templates --template-sha256 "$digest" --request-rate 10 --authorized
+
+# Evidence and reporting
 ./aegiscope report
+./aegiscope report --format all --profile config/report_profile.example.json
+./aegiscope report --format all --profile ./client-report-profile.json --strict
 ./aegiscope compare
 ```
 
-Use `--skip-host-discovery` only when the authorized target is known to suppress discovery probes. It maps to Nmap `-Pn` and is never enabled by default.
+Use `--skip-host-discovery` only when a known in-scope target suppresses discovery probes. Sensitive authorization, cookie, proxy-authorization, and request-body values are redacted from manifests.
 
-Sensitive `Authorization`, `Cookie`, and `Proxy-Authorization` header values are redacted in manifests even though the original values are passed to the selected tool.
+## Menu and header designs
 
-## Results
+Run `./aegiscope` without arguments. Its menu is organized into workspace/assets, pipelines, network/ports, web, API, validation, resilience, evidence/reporting, credentials/plugins, and environment/design.
 
-Runs are stored under:
-
-```text
-results/<UTC timestamp>_<target>_<operation>/
-├── manifest.json
-├── tool output files
-└── report.md             # after `aegiscope report`
-```
-
-The results directory is ignored by Git. Treat reports as sensitive assessment data.
-
-## Development
+The first interactive render animates `IRONCRYPT` into `AEGISCOPE`. Select classic, shield, or minimal under **Environment & design**, or set:
 
 ```bash
-shellcheck aegiscope required_perms.sh bin/aegiscope bin/**/*.sh lib/*.sh
-shfmt -d -i 2 -ci aegiscope required_perms.sh bin lib tests
+AEGISCOPE_BANNER_STYLE=shield ./aegiscope
+NO_ANIMATION=1 ./aegiscope
+NO_COLOR=1 ./aegiscope
+```
+
+Animation and color are automatically suppressed in non-interactive output and CI.
+
+## Results and development
+
+Every run is written below `results/` with its manifest and evidence. The cross-run database is `results/workspace/assets.db`; authentication profiles are protected under `results/workspace/auth/`. Reports are drafts until automated findings are manually validated and the strict quality gate passes. Copy [the report-profile example](config/report_profile.example.json), supply the real engagement metadata, and protect the entire results tree as sensitive assessment data.
+
+```bash
+bash -n aegiscope required_perms.sh bin/aegiscope lib/*.sh plugins/*.sh
+shellcheck -S warning aegiscope required_perms.sh bin/aegiscope lib/*.sh plugins/*.sh
+shfmt -d -i 2 -ci aegiscope required_perms.sh bin lib tests plugins
+python3 -m py_compile lib/workspace.py
 bats tests
 ```
 
-Linux CI runs Bash syntax validation, ShellCheck, shfmt, and mocked Bats tests. See [docs/USAGE.md](docs/USAGE.md) for the complete CLI reference and [docs/SCAN_TYPES.md](docs/SCAN_TYPES.md) for profile semantics.
+Linux CI runs these syntax, formatting, static-analysis, Python, executable-bit, and fully mocked Bats checks. See [complete usage](docs/USAGE.md), [architecture](docs/ARCHITECTURE.md), [profile semantics](docs/SCAN_TYPES.md), the [implementation matrix](docs/FEATURE_MATRIX.md), and the [changelog](CHANGELOG.md).
 
-The complete implementation audit is maintained in [docs/FEATURE_MATRIX.md](docs/FEATURE_MATRIX.md).
-
-## Design references
-
-Aegiscope follows the information-gathering structure in the [OWASP Web Security Testing Guide](https://owasp.org/www-project-web-security-testing-guide/stable/4-Web_Application_Security_Testing/01-Information_Gathering/README). Its HTTP method output is deliberately labelled “advertised methods” according to [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html), rather than claiming an exhaustive authorization test.
-
-The project remains licensed under GPLv3. The name collision check performed during this rename found no exact public web result for “Aegiscope” or “IronCrypt Aegiscope”; this is not a legal trademark clearance.
+The project remains GPLv3 licensed.

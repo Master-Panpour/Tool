@@ -13,12 +13,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install shell tooling
-        run: sudo apt-get update && sudo apt-get install -y bats jq shellcheck shfmt
+        run: sudo apt-get update && sudo apt-get install -y bats jq python3 python3-yaml shellcheck shfmt sqlite3
+      - name: Executable entry points
+        run: test -x aegiscope && test -x bin/aegiscope && test -x required_perms.sh
       - name: Bash syntax
         run: find . -type f \( -name '*.sh' -o -name '*.bash' -o -name aegiscope \) -not -path './.git/*' -print0 | xargs -0 bash -n
       - name: ShellCheck
         run: find . -type f \( -name '*.sh' -o -name '*.bash' -o -name aegiscope \) -not -path './.git/*' -print0 | xargs -0 shellcheck --severity=warning
       - name: shfmt
-        run: shfmt -d -i 2 -ci aegiscope required_perms.sh bin lib tests
+        run: shfmt -d -i 2 -ci aegiscope required_perms.sh bin lib plugins tests
+      - name: Python workspace syntax
+        run: python3 -m py_compile lib/workspace.py && python3 -m json.tool config/report_profile.example.json >/dev/null
       - name: Bats
         run: bats tests
