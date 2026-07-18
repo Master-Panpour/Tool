@@ -5,7 +5,7 @@ This matrix maps the requested roadmap to implemented behavior and regression co
 | Capability | Implementation | Verification |
 |---|---|---|
 | IronCrypt product identity | IronCrypt Aegiscope, command `aegiscope`, versioned branding | CLI and banner tests |
-| Three header designs and transition | Classic, shield, minimal; one-time `IRONCRYPT` -> `AEGISCOPE` TTY animation | Forced-color/non-animation Bats test |
+| Four header designs, mascot, credits, and transition | Default permanent IronCrypt Sentinel mascot plus classic, shield, and minimal; persistent creator credits; one-time `IRONCRYPT` -> `AEGISCOPE` TTY animation | Forced-color/non-animation Bats test |
 | Systematic menu | Ten top-level categories with focused submenus | Menu smoke test |
 | TCP/UDP/firewall/custom profiles | `ports --profile quick-tcp|full-tcp|udp-top|firewall-map|custom` | Profile argument tests |
 | Normal discovery and advanced `-Pn` | Default omits `-Pn`; `--skip-host-discovery` adds it explicitly | Nmap argument tests |

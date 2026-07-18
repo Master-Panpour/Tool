@@ -1,6 +1,17 @@
 # Changelog
 
-## 0.4.0 - Unreleased
+## 0.4.1 - Unreleased
+
+### Added
+
+- Permanent IronCrypt Sentinel ASCII mascot header.
+- Persistent `IronCrypt • Made by Master_Panpour & Master_Demon` credit footer across every banner style.
+
+### Changed
+
+- The permanent mascot header is now the default terminal design and is selectable from the Environment & design menu.
+
+## 0.4.0 - 2026-07-18
 
 ### Added
 

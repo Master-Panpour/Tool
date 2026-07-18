@@ -6,7 +6,7 @@ IronCrypt Aegiscope is a personal, authorization-first reconnaissance workspace 
 
 ## Release status
 
-The current release is **Aegiscope 0.4.0**. The repository quality gate covers Bash syntax, ShellCheck, shfmt, Python compilation, JSON validation, executable permissions, and 46 mocked Bats integration tests. The mocked suite validates orchestration and evidence handling without scanning live targets; operators should still complete an authorized lab acceptance run with their installed external-tool versions before production use.
+The current release is **Aegiscope 0.4.1**. The repository quality gate covers Bash syntax, ShellCheck, shfmt, Python compilation, JSON validation, executable permissions, and mocked Bats integration tests. The mocked suite validates orchestration and evidence handling without scanning live targets; operators should still complete an authorized lab acceptance run with their installed external-tool versions before production use.
 
 ## What it provides
 
@@ -29,7 +29,7 @@ The current release is **Aegiscope 0.4.0**. The repository quality gate covers B
 - Protected local authentication-header profiles and a reviewed plugin adapter contract.
 - Versioned run manifests containing the authorization assertion, scope snapshot, exact redacted commands, per-command timestamps/exit codes, tool versions, and SHA-256 evidence inventory.
 - Enterprise report bundles in Markdown, print-ready HTML, JSON, and findings CSV, with engagement profiles, executive/technical sections, evidence verification, and strict final-report readiness gates.
-- An extensive category/subcategory menu with classic, shield, and minimal IronCrypt-to-Aegiscope header designs.
+- An extensive category/subcategory menu with permanent mascot, classic, shield, and minimal IronCrypt-to-Aegiscope header designs.
 
 ## Setup
 
@@ -111,10 +111,10 @@ Use `--skip-host-discovery` only when a known in-scope target suppresses discove
 
 Run `./aegiscope` without arguments. Its menu is organized into workspace/assets, pipelines, network/ports, web, API, validation, resilience, evidence/reporting, credentials/plugins, and environment/design.
 
-The first interactive render animates `IRONCRYPT` into `AEGISCOPE`. Select classic, shield, or minimal under **Environment & design**, or set:
+The first interactive render animates `IRONCRYPT` into `AEGISCOPE`. The permanent IronCrypt Sentinel mascot is the default; select permanent, classic, shield, or minimal under **Environment & design**, or set:
 
 ```bash
-AEGISCOPE_BANNER_STYLE=shield ./aegiscope
+AEGISCOPE_BANNER_STYLE=permanent ./aegiscope
 NO_ANIMATION=1 ./aegiscope
 NO_COLOR=1 ./aegiscope
 ```
@@ -123,7 +123,7 @@ Animation and color are automatically suppressed in non-interactive output and C
 
 ### Header and animation implementation
 
-The terminal branding is dependency-free Bash in `lib/core.sh`. It uses ANSI escape sequences through `printf`, with magenta for IronCrypt, cyan for Aegiscope and menu choices, yellow for prompts and the transition arrow, and blue for section labels. `AEGISCOPE_BANNER_STYLE` dispatches to one of three renderers: `classic`, `shield`, or `minimal`.
+The terminal branding is dependency-free Bash in `lib/core.sh`. It uses ANSI escape sequences through `printf`, with magenta for IronCrypt, cyan for Aegiscope and menu choices, yellow for prompts and the transition arrow, and blue for section labels. `AEGISCOPE_BANNER_STYLE` dispatches to one of four renderers: `permanent`, `classic`, `shield`, or `minimal`. Every renderer includes the persistent credit line `IronCrypt • Made by Master_Panpour & Master_Demon`.
 
 On the first interactive render, `ui_brand_animation` clears and redraws the terminal through seven frames, sleeping 70 milliseconds between frames:
 
@@ -137,7 +137,7 @@ IRONCRYPT  →  AEGIS
 IRONCRYPT  →  AEGISCOPE
 ```
 
-The animation runs only when standard output is a terminal. It is skipped when `NO_ANIMATION=1`, when `CI=true`, or when output is redirected. Color follows the `NO_COLOR` convention and can be enabled in automated tests with `AEGISCOPE_FORCE_COLOR=1`. The **Environment & design** menu previews and switches all three header styles for the current session.
+The animation runs only when standard output is a terminal. It is skipped when `NO_ANIMATION=1`, when `CI=true`, or when output is redirected. Color follows the `NO_COLOR` convention and can be enabled in automated tests with `AEGISCOPE_FORCE_COLOR=1`. The **Environment & design** menu previews and switches all four header styles for the current session.
 
 ## Results and development
 

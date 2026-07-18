@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 AEGISCOPE_NAME="IronCrypt Aegiscope"
-AEGISCOPE_VERSION="0.4.0"
+AEGISCOPE_VERSION="0.4.1"
 AEGISCOPE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AEGISCOPE_RESULTS_ROOT="${AEGISCOPE_RESULTS_ROOT:-${AEGISCOPE_ROOT}/results}"
 AEGISCOPE_SCOPE_FILE="${AEGISCOPE_SCOPE_FILE:-${AEGISCOPE_ROOT}/config/authorized_scope.txt}"
@@ -10,7 +10,7 @@ AEGISCOPE_ASSET_DB="${AEGISCOPE_ASSET_DB:-${AEGISCOPE_WORKSPACE_ROOT}/assets.db}
 AEGISCOPE_CACHE_ROOT="${AEGISCOPE_CACHE_ROOT:-${AEGISCOPE_WORKSPACE_ROOT}/cache}"
 AEGISCOPE_AUTH_ROOT="${AEGISCOPE_AUTH_ROOT:-${AEGISCOPE_WORKSPACE_ROOT}/auth}"
 AEGISCOPE_PLUGIN_ROOT="${AEGISCOPE_PLUGIN_ROOT:-${AEGISCOPE_ROOT}/plugins}"
-AEGISCOPE_BANNER_STYLE="${AEGISCOPE_BANNER_STYLE:-classic}"
+AEGISCOPE_BANNER_STYLE="${AEGISCOPE_BANNER_STYLE:-permanent}"
 AEGISCOPE_MAX_RATE="${AEGISCOPE_MAX_RATE:-100}"
 AEGISCOPE_MAX_LOAD_DURATION="${AEGISCOPE_MAX_LOAD_DURATION:-60}"
 AEGISCOPE_MAX_LOAD_CONCURRENCY="${AEGISCOPE_MAX_LOAD_CONCURRENCY:-20}"
@@ -59,13 +59,34 @@ ui_banner_minimal() {
   printf '%sAuthorized reconnaissance workspace • v%s%s\n' "$C_BLUE" "$AEGISCOPE_VERSION" "$C_RESET"
 }
 
+ui_banner_permanent() {
+  printf '%s%s            .-------------------------.%s\n' "$C_BOLD" "$C_MAGENTA" "$C_RESET"
+  printf '%s%s           /        IRONCRYPT          \\%s\n' "$C_BOLD" "$C_MAGENTA" "$C_RESET"
+  printf '%s%s          /   /\\              /\\     \\%s\n' "$C_BOLD" "$C_MAGENTA" "$C_RESET"
+  printf '%s%s         |   /  \\   .----.   /  \\     |%s\n' "$C_BOLD" "$C_CYAN" "$C_RESET"
+  printf '%s%s         |  | () | / o  o \\ | () |    |%s\n' "$C_BOLD" "$C_CYAN" "$C_RESET"
+  printf '%s%s         |   \\__/ |   /\\   | \\__/     |%s\n' "$C_BOLD" "$C_CYAN" "$C_RESET"
+  printf '%s%s         |         \\  ====  /          |%s\n' "$C_BOLD" "$C_CYAN" "$C_RESET"
+  printf '%s%s%s%s\n' "$C_BOLD" "$C_MAGENTA" "          \\         '----'          /" "$C_RESET"
+  printf '%s%s%s%s\n' "$C_BOLD" "$C_MAGENTA" "           '--------[  IC  ]--------'" "$C_RESET"
+  printf '%s%s                    \\/%s\n' "$C_BOLD" "$C_YELLOW" "$C_RESET"
+  printf '%s%s                 AEGISCOPE%s\n' "$C_BOLD" "$C_CYAN" "$C_RESET"
+  printf '%s%s       AUTHORIZED RECONNAISSANCE SENTINEL%s\n' "$C_BOLD" "$C_BLUE" "$C_RESET"
+}
+
+ui_brand_credits() {
+  printf '%s%sIronCrypt%s • Made by %sMaster_Panpour%s & %sMaster_Demon%s\n' "$C_BOLD" "$C_MAGENTA" "$C_RESET" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+}
+
 ui_banner() {
   case "$AEGISCOPE_BANNER_STYLE" in
     classic) ui_banner_classic ;;
     shield) ui_banner_shield ;;
     minimal) ui_banner_minimal ;;
-    *) ui_banner_classic ;;
+    permanent) ui_banner_permanent ;;
+    *) ui_banner_permanent ;;
   esac
+  ui_brand_credits
 }
 
 ui_set_banner_style() {

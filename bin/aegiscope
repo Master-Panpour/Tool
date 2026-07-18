@@ -1369,7 +1369,10 @@ menu_pause() {
 menu_read() {
   local prompt="$1" variable="$2"
   ui_prompt "$prompt"
-  read -r "${variable?}"
+  if ! read -r "${variable?}"; then
+    printf '\n'
+    exit 0
+  fi
 }
 
 menu_workspace() {
@@ -1888,8 +1891,9 @@ menu_maintenance() {
         ui_option '1' 'Classic framed header'
         ui_option '2' 'IronCrypt shield transition header'
         ui_option '3' 'Minimal operator header'
+        ui_option '4' 'Permanent IronCrypt sentinel mascot header'
         menu_read 'Choose design: ' style
-        case "$style" in 1) ui_set_banner_style classic ;; 2) ui_set_banner_style shield ;; 3) ui_set_banner_style minimal ;; *) warn 'Invalid design' ;; esac
+        case "$style" in 1) ui_set_banner_style classic ;; 2) ui_set_banner_style shield ;; 3) ui_set_banner_style minimal ;; 4) ui_set_banner_style permanent ;; *) warn 'Invalid design' ;; esac
         ui_banner
         ;;
       0) return ;;

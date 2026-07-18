@@ -565,14 +565,19 @@ PY
   grep -q 'http-head.normalized.txt' "$run_dir/manifest.json"
 }
 
-@test "classic shield and minimal header designs render without animation in automation" {
+@test "all header designs render permanent IronCrypt creator credits without animation" {
   run bash -c "printf '0\\n' | NO_ANIMATION=1 AEGISCOPE_FORCE_COLOR=1 AEGISCOPE_BANNER_STYLE=classic '$PROJECT_ROOT/bin/aegiscope'"
   [ "$status" -eq 0 ]
   [[ "$output" == *"Reconnaissance • Assets • Evidence • Validation"* ]]
+  [[ "$output" == *"IronCrypt"*"Made by"*"Master_Panpour"*"Master_Demon"* ]]
   run bash -c "printf '0\\n' | NO_ANIMATION=1 AEGISCOPE_FORCE_COLOR=1 AEGISCOPE_BANNER_STYLE=shield '$PROJECT_ROOT/bin/aegiscope'"
   [ "$status" -eq 0 ]
   [[ "$output" == *"ASSET INTELLIGENCE"* ]]
   run bash -c "printf '0\\n' | NO_ANIMATION=1 AEGISCOPE_FORCE_COLOR=1 AEGISCOPE_BANNER_STYLE=minimal '$PROJECT_ROOT/bin/aegiscope'"
   [ "$status" -eq 0 ]
   [[ "$output" == *"[ IRONCRYPT ]"* ]]
+  run bash -c "printf '0\\n' | NO_ANIMATION=1 AEGISCOPE_FORCE_COLOR=1 AEGISCOPE_BANNER_STYLE=permanent '$PROJECT_ROOT/bin/aegiscope'"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"AUTHORIZED RECONNAISSANCE SENTINEL"* ]]
+  [[ "$output" == *"[  IC  ]"* ]]
 }

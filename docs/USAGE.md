@@ -197,6 +197,6 @@ The structure follows [OWASP WSTG reporting guidance](https://owasp.org/www-proj
 
 `compare` compares two manifest runs. Asset `diff` compares normalized inventory across runs or time windows.
 
-The ten menu categories are workspace/assets, pipelines, network/ports, web, API, validation, resilience, evidence/reporting, credentials/plugins, and environment/design. Classic, shield, and minimal headers are selectable. `NO_ANIMATION=1` and `NO_COLOR=1` support accessible or automated output.
+The ten menu categories are workspace/assets, pipelines, network/ports, web, API, validation, resilience, evidence/reporting, credentials/plugins, and environment/design. The permanent IronCrypt Sentinel mascot is the default header; permanent, classic, shield, and minimal designs are selectable. Every design retains the `IronCrypt • Made by Master_Panpour & Master_Demon` credit footer. `NO_ANIMATION=1` and `NO_COLOR=1` support accessible or automated output.
 
 `update --check` fetches tracked-branch metadata and reports current/behind/ahead/diverged state. It never replaces files or executes remote content.
