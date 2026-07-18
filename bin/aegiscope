@@ -1,0 +1,1600 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+BASEDIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=../lib/core.sh
+source "${BASEDIR}/../lib/core.sh"
+
+usage() {
+  cat <<'EOF'
+IronCrypt Aegiscope - authorized reconnaissance and enumeration
+
+Usage:
+  aegiscope ports --target HOST [--profile PROFILE] [options]
+  aegiscope web --target URL|DOMAIN [--mode MODE] [options]
+  aegiscope recon --target URL|DOMAIN [--stage STAGE] [options]
+  aegiscope xss --target URL --parameter NAME [options]
+  aegiscope load --target URL [options]
+  aegiscope ddos --target URL [options]       Alias for bounded load resilience
+  aegiscope doctor
+  aegiscope report [--run RUN_DIRECTORY]
+  aegiscope compare --baseline RUN_DIRECTORY --current RUN_DIRECTORY
+  aegiscope update --check
+
+Scan profiles: quick-tcp, full-tcp, udp-top, firewall-map, custom
+Web modes: dir, vhost, dns, subdomains, http, tech, tls, all
+Resilience: bounded single-source load testing only; no distributed flooding
+Recon stages: server, metafiles, applications, entry-points, paths, architecture, all
+
+Safety options:
+  --scope-file FILE         Authorized targets (default: config/authorized_scope.txt)
+  --authorized             Non-interactive assertion of explicit authorization
+  --request-rate N         Requests/packets per second, capped at AEGISCOPE_MAX_RATE
+  --skip-host-discovery    Add Nmap -Pn; normal host discovery is the default
+
+Run 'aegiscope <command> --help' for command-specific options.
+EOF
+}
+
+ports_usage() {
+  cat <<'EOF'
+Usage: aegiscope ports --target HOST [options]
+
+Options:
+  --profile NAME           quick-tcp (default), full-tcp, udp-top, firewall-map, custom
+  --ports SPEC             Port expression for custom profile
+  --scan-type TYPE         connect, syn, null, fin, xmas, ack, or udp
+  --service-detection      Enable -sV for custom scans
+  --skip-host-discovery    Advanced override: add -Pn
+  --request-rate N         Nmap --max-rate ceiling
+  --scope-file FILE
+  --authorized
+EOF
+}
+
+ports_command() {
+  local target="" profile="quick-tcp" ports="" scan_type="connect"
+  local service_detection=0 skip_discovery=0 authorized=0 request_rate="$AEGISCOPE_MAX_RATE"
+  local status output_prefix artifact
+  local -a flags=()
+
+  while (($#)); do
+    case "$1" in
+      --target)
+        [[ $# -ge 2 ]] || die "--target needs a value"
+        target="$2"
+        shift 2
+        ;;
+      --profile)
+        [[ $# -ge 2 ]] || die "--profile needs a value"
+        profile="$2"
+        shift 2
+        ;;
+      --ports)
+        [[ $# -ge 2 ]] || die "--ports needs a value"
+        ports="$2"
+        shift 2
+        ;;
+      --scan-type)
+        [[ $# -ge 2 ]] || die "--scan-type needs a value"
+        scan_type="$2"
+        shift 2
+        ;;
+      --service-detection)
+        service_detection=1
+        shift
+        ;;
+      --skip-host-discovery | -Pn)
+        skip_discovery=1
+        shift
+        ;;
+      --request-rate)
+        [[ $# -ge 2 ]] || die "--request-rate needs a value"
+        request_rate="$2"
+        shift 2
+        ;;
+      --scope-file)
+        [[ $# -ge 2 ]] || die "--scope-file needs a value"
+        AEGISCOPE_SCOPE_FILE="$2"
+        shift 2
+        ;;
+      --authorized)
+        authorized=1
+        shift
+        ;;
+      -h | --help)
+        ports_usage
+        return 0
+        ;;
+      *) die "unknown ports option: $1" ;;
+    esac
+  done
+
+  [[ -n "$target" ]] || die "ports requires --target"
+  validate_rate "$request_rate"
+  authorize_target "$target" "$authorized"
+  require_cmd nmap
+
+  case "$profile" in
+    quick-tcp) flags=(-sT --top-ports 1000 -sV) ;;
+    full-tcp) flags=(-sT -p- -sV) ;;
+    udp-top) flags=(-sU --top-ports 100 -sV) ;;
+    firewall-map) flags=(-sA --top-ports 1000) ;;
+    custom)
+      case "$scan_type" in
+        connect) flags=(-sT) ;;
+        syn) flags=(-sS) ;;
+        null) flags=(-sN) ;;
+        fin) flags=(-sF) ;;
+        xmas) flags=(-sX) ;;
+        ack) flags=(-sA) ;;
+        udp) flags=(-sU) ;;
+        *) die "unsupported custom scan type: $scan_type" ;;
+      esac
+      if [[ -n "$ports" ]]; then
+        [[ "$ports" =~ ^[0-9TUSp,:-]+$ ]] || die "invalid port expression: $ports"
+        flags+=(-p "$ports")
+      else
+        flags+=(--top-ports 1000)
+      fi
+      ((service_detection == 0)) || flags+=(-sV)
+      ;;
+    *) die "unknown scan profile: $profile" ;;
+  esac
+  ((skip_discovery == 0)) || flags+=(-Pn)
+  flags+=(--max-rate "$request_rate")
+
+  create_run "$target" "ports-${profile}"
+  output_prefix="${RUN_DIR}/nmap"
+  info "Profile: $profile"
+  info "Host discovery: $([[ "$skip_discovery" == 1 ]] && printf 'disabled (-Pn)' || printf 'normal')"
+  run_logged "" nmap "${flags[@]}" -oA "$output_prefix" "$target"
+  status=$?
+  for artifact in "${output_prefix}.nmap" "${output_prefix}.gnmap" "${output_prefix}.xml"; do
+    [[ ! -e "$artifact" ]] || add_artifact "$artifact"
+  done
+  write_manifest "$status"
+  return "$status"
+}
+
+web_usage() {
+  cat <<'EOF'
+Usage: aegiscope web --target URL|DOMAIN [options]
+
+Options:
+  --mode MODE              dir, vhost, dns, subdomains, http, tech, tls, or all (default: http)
+  --wordlist FILE          Content/VHost wordlist
+  --request-rate N         Maximum requests per second
+  --max-time SECONDS       ffuf total run time (default: 300)
+  --recursion-depth N      ffuf recursion depth; 0 disables recursion
+  --header 'Name: value'   Repeatable HTTP/auth header (secrets redacted in manifest)
+  --output-format FORMAT   json, html, csv, or all (default: json)
+  --scope-file FILE
+  --authorized
+EOF
+}
+
+ensure_url() {
+  local target="$1"
+  if [[ "$target" =~ ^https?:// ]]; then printf '%s' "$target"; else printf 'https://%s' "$target"; fi
+}
+
+collect_new_artifacts() {
+  local file
+  while IFS= read -r file; do
+    case " ${RUN_ARTIFACTS[*]} " in *" ${file#"$RUN_DIR"/} "*) ;; *) add_artifact "$file" ;; esac
+  done < <(find "$RUN_DIR" -type f ! -name manifest.json -print)
+}
+
+run_ffuf_dir() {
+  local url="$1" wordlist="$2" rate="$3" max_time="$4" recursion_depth="$5" output_format="$6"
+  shift 6
+  local -a headers=("$@") cmd
+  local output="${RUN_DIR}/ffuf-results"
+  [[ -s "$wordlist" ]] || {
+    warn "wordlist is missing or empty: $wordlist"
+    return 2
+  }
+  if command -v ffuf >/dev/null 2>&1; then
+    cmd=(ffuf -ac -w "${wordlist}:FUZZ" -u "${url%/}/FUZZ" -mc all -fc 404 -rate "$rate" -maxtime "$max_time" -of "$output_format" -o "$output")
+    if ((recursion_depth > 0)); then
+      cmd+=(-recursion -recursion-depth "$recursion_depth")
+    fi
+    local header
+    for header in "${headers[@]}"; do cmd+=(-H "$header"); done
+    run_logged_sensitive "" "${cmd[@]}"
+  elif command -v gobuster >/dev/null 2>&1; then
+    local delay_ms=$(((1000 + rate - 1) / rate))
+    warn "ffuf is unavailable; using rate-limited Gobuster fallback"
+    cmd=(gobuster dir -u "${url%/}/" -w "$wordlist" -t 1 --delay "${delay_ms}ms" --timeout 10s -o "${RUN_DIR}/gobuster-dir.txt")
+    local header
+    for header in "${headers[@]}"; do cmd+=(-H "$header"); done
+    run_logged_sensitive "${RUN_DIR}/gobuster-dir.txt" "${cmd[@]}"
+  else
+    warn "directory enumeration requires ffuf or gobuster"
+    return 2
+  fi
+}
+
+run_vhost() {
+  local url="$1" wordlist="$2" rate="$3"
+  shift 3
+  local -a headers=("$@") cmd
+  local delay_ms=$(((1000 + rate - 1) / rate)) header
+  [[ -s "$wordlist" ]] || {
+    warn "wordlist is missing or empty: $wordlist"
+    return 2
+  }
+  command -v gobuster >/dev/null 2>&1 || {
+    warn "VHost discovery requires gobuster"
+    return 2
+  }
+  cmd=(gobuster vhost -u "$url" -w "$wordlist" --append-domain -t 1 --delay "${delay_ms}ms" --timeout 10s -o "${RUN_DIR}/gobuster-vhosts.txt")
+  for header in "${headers[@]}"; do cmd+=(-H "$header"); done
+  run_logged_sensitive "${RUN_DIR}/gobuster-vhosts.txt" "${cmd[@]}"
+}
+
+run_dns_enum() {
+  local target="$1" wordlist="$2" rate="$3" host delay_ms
+  host="$(normalize_scope_target "$target")"
+  delay_ms=$(((1000 + rate - 1) / rate))
+  [[ -s "$wordlist" ]] || {
+    warn "wordlist is missing or empty: $wordlist"
+    return 2
+  }
+  command -v gobuster >/dev/null 2>&1 || {
+    warn "DNS enumeration requires gobuster"
+    return 2
+  }
+  run_logged "${RUN_DIR}/gobuster-dns.txt" gobuster dns -d "$host" -w "$wordlist" -t 1 --delay "${delay_ms}ms" --timeout 10s -o "${RUN_DIR}/gobuster-dns.txt"
+}
+
+run_technology_analysis() {
+  local url="$1" rate="$2" status=0
+  if command -v httpx >/dev/null 2>&1; then
+    run_logged_capture "${RUN_DIR}/technology-httpx.jsonl" httpx -u "$url" -rl "$rate" -silent -status-code -title -tech-detect -web-server -ip -cname -asn -cdn -json || status=$?
+  elif command -v whatweb >/dev/null 2>&1; then
+    run_logged_capture "${RUN_DIR}/technology-whatweb.txt" whatweb "$url" || status=$?
+  else
+    warn "technology analysis requires httpx or whatweb"
+    status=2
+  fi
+  return "$status"
+}
+
+run_subdomains() {
+  local target="$1" rate="$2" host jsonl hosts enriched status=0
+  host="$(normalize_scope_target "$target")"
+  jsonl="${RUN_DIR}/subdomains.jsonl"
+  hosts="${RUN_DIR}/subdomains.txt"
+  enriched="${RUN_DIR}/httpx.jsonl"
+  if command -v subfinder >/dev/null 2>&1; then
+    run_logged "$jsonl" subfinder -d "$host" -rl "$rate" -oJ -cs -o "$jsonl" || status=$?
+    if command -v jq >/dev/null 2>&1; then
+      RUN_COMMANDS+=("$(command_string jq -r '.host // .input // empty' "$jsonl")")
+      jq -r '.host // .input // empty' "$jsonl" | sort -u >"$hosts"
+      add_artifact "$hosts"
+      if command -v httpx >/dev/null 2>&1 && [[ -s "$hosts" ]]; then
+        run_logged "$enriched" httpx -l "$hosts" -rl "$rate" -silent -status-code -title -tech-detect -web-server -ip -cname -json -o "$enriched" || status=$?
+      else
+        warn "httpx unavailable or no subdomains found; skipping HTTP enrichment"
+      fi
+    else
+      warn "jq is required to feed Subfinder JSONL into httpx"
+    fi
+  elif command -v sublist3r >/dev/null 2>&1; then
+    warn "subfinder unavailable; using legacy Sublist3r fallback"
+    run_logged "$hosts" sublist3r -d "$host" -o "$hosts" || status=$?
+  elif command -v assetfinder >/dev/null 2>&1; then
+    warn "subfinder unavailable; using legacy assetfinder fallback"
+    run_logged_capture "$hosts" assetfinder --subs-only "$host" || status=$?
+  else
+    warn "subdomain discovery requires subfinder, sublist3r, or assetfinder"
+    status=2
+  fi
+  return "$status"
+}
+
+header_value() {
+  local name="$1" file="$2"
+  awk -v name="$name" 'BEGIN{IGNORECASE=1} $0 ~ "^" name ":" {sub(/^[^:]+:[[:space:]]*/, ""); sub(/\r$/, ""); value=$0} END{print value}' "$file"
+}
+
+run_http_analysis() {
+  local url="$1" prefix="${2:-http}" headers_file body_file summary_file options_file analysis_file status=0
+  headers_file="${RUN_DIR}/${prefix}-headers.txt"
+  body_file="${RUN_DIR}/${prefix}-body.html"
+  summary_file="${RUN_DIR}/${prefix}-summary.txt"
+  options_file="${RUN_DIR}/${prefix}-options.txt"
+  analysis_file="${RUN_DIR}/${prefix}-analysis.txt"
+  require_cmd curl
+  run_logged_capture "$summary_file" curl --silent --show-error --location --max-redirs 5 --connect-timeout 10 --max-time 30 --dump-header "$headers_file" --output "$body_file" --write-out $'final_url=%{url_effective}\nstatus=%{http_code}\nremote_ip=%{remote_ip}\ntls_verify=%{ssl_verify_result}\nredirects=%{num_redirects}\n' --url "$url" || status=$?
+  [[ ! -e "$headers_file" ]] || add_artifact "$headers_file"
+  [[ ! -e "$body_file" ]] || add_artifact "$body_file"
+  run_logged "" curl --silent --show-error --connect-timeout 10 --max-time 30 --request OPTIONS --dump-header "$options_file" --output /dev/null --url "$url" || status=$?
+  [[ ! -e "$options_file" ]] || add_artifact "$options_file"
+  {
+    printf 'IronCrypt Aegiscope HTTP analysis\n\n'
+    cat "$summary_file" 2>/dev/null || true
+    printf '\nServer hints\n'
+    printf 'server=%s\n' "$(header_value Server "$headers_file")"
+    printf 'powered_by=%s\n' "$(header_value X-Powered-By "$headers_file")"
+    printf '\nCookies\n'
+    grep -i '^Set-Cookie:' "$headers_file" 2>/dev/null || printf 'none advertised\n'
+    printf '\nRedirect chain\n'
+    grep -Ei '^(HTTP/|Location:)' "$headers_file" 2>/dev/null || true
+    printf '\nSecurity headers\n'
+    local security_header value
+    for security_header in Strict-Transport-Security Content-Security-Policy X-Content-Type-Options Referrer-Policy Permissions-Policy Cross-Origin-Opener-Policy Cross-Origin-Resource-Policy; do
+      value="$(header_value "$security_header" "$headers_file")"
+      if [[ -n "$value" ]]; then printf '%s: present (%s)\n' "$security_header" "$value"; else printf '%s: missing\n' "$security_header"; fi
+    done
+    printf '\nAdvertised methods (OPTIONS/Allow; informational, not an exhaustive authorization test)\n'
+    value="$(header_value Allow "$options_file")"
+    printf '%s\n' "${value:-not advertised}"
+  } >"$analysis_file"
+  add_artifact "$analysis_file"
+  return "$status"
+}
+
+run_tls_analysis() {
+  local target="$1" url host port endpoint status=0
+  url="$(ensure_url "$target")"
+  host="$(extract_url_host "$url")" || return 2
+  port="$(extract_url_port "$url")" || return 2
+  endpoint="${host}:${port}"
+  if command -v testssl.sh >/dev/null 2>&1; then
+    run_logged "" testssl.sh --quiet --jsonfile "${RUN_DIR}/testssl.json" --htmlfile "${RUN_DIR}/testssl.html" "$endpoint" || status=$?
+  elif command -v testssl >/dev/null 2>&1; then
+    run_logged "" testssl --quiet --jsonfile "${RUN_DIR}/testssl.json" --htmlfile "${RUN_DIR}/testssl.html" "$endpoint" || status=$?
+  elif command -v openssl >/dev/null 2>&1; then
+    warn "testssl.sh unavailable; using OpenSSL certificate verification fallback"
+    run_logged_capture "${RUN_DIR}/openssl-tls.txt" openssl s_client -connect "$endpoint" -servername "$host" -verify_hostname "$host" -verify_return_error -showcerts </dev/null || status=$?
+  elif command -v nmap >/dev/null 2>&1; then
+    warn "testssl.sh and OpenSSL unavailable; using Nmap ssl-cert fallback"
+    run_logged_capture "${RUN_DIR}/nmap-tls.txt" nmap --script ssl-cert,ssl-enum-ciphers -p "$port" "$host" || status=$?
+  else
+    warn "TLS analysis requires testssl.sh, OpenSSL, or Nmap"
+    status=2
+  fi
+  return "$status"
+}
+
+web_command() {
+  local target="" mode="http" wordlist="" request_rate="$AEGISCOPE_MAX_RATE" max_time=300 recursion_depth=0 output_format="json" authorized=0
+  local -a headers=()
+  local status=0 step_status url
+  while (($#)); do
+    case "$1" in
+      --target)
+        [[ $# -ge 2 ]] || die "--target needs a value"
+        target="$2"
+        shift 2
+        ;;
+      --mode)
+        [[ $# -ge 2 ]] || die "--mode needs a value"
+        mode="$2"
+        shift 2
+        ;;
+      --wordlist)
+        [[ $# -ge 2 ]] || die "--wordlist needs a value"
+        wordlist="$2"
+        shift 2
+        ;;
+      --request-rate | --rate)
+        [[ $# -ge 2 ]] || die "$1 needs a value"
+        request_rate="$2"
+        shift 2
+        ;;
+      --max-time)
+        [[ $# -ge 2 ]] || die "--max-time needs a value"
+        max_time="$2"
+        shift 2
+        ;;
+      --recursion-depth)
+        [[ $# -ge 2 ]] || die "--recursion-depth needs a value"
+        recursion_depth="$2"
+        shift 2
+        ;;
+      --header)
+        [[ $# -ge 2 ]] || die "--header needs a value"
+        headers+=("$2")
+        shift 2
+        ;;
+      --output-format)
+        [[ $# -ge 2 ]] || die "--output-format needs a value"
+        output_format="$2"
+        shift 2
+        ;;
+      --scope-file)
+        [[ $# -ge 2 ]] || die "--scope-file needs a value"
+        AEGISCOPE_SCOPE_FILE="$2"
+        shift 2
+        ;;
+      --authorized)
+        authorized=1
+        shift
+        ;;
+      -h | --help)
+        web_usage
+        return 0
+        ;;
+      *) die "unknown web option: $1" ;;
+    esac
+  done
+  [[ -n "$target" ]] || die "web requires --target"
+  validate_rate "$request_rate"
+  is_positive_integer "$max_time" || die "--max-time must be a positive integer"
+  [[ "$recursion_depth" =~ ^[0-9]+$ ]] || die "--recursion-depth must be zero or a positive integer"
+  case "$output_format" in json | html | csv | all) ;; *) die "unsupported ffuf output format: $output_format" ;; esac
+  case "$mode" in dir | vhost | dns | subdomains | http | tech | tls | all) ;; *) die "unknown web mode: $mode" ;; esac
+  authorize_target "$target" "$authorized"
+  create_run "$target" "web-${mode}"
+  url="$(ensure_url "$target")"
+
+  if [[ "$mode" == "dir" || "$mode" == "all" ]]; then
+    [[ -n "$wordlist" ]] || wordlist="${AEGISCOPE_ROOT}/wordlists/web-small.txt"
+    run_ffuf_dir "$url" "$wordlist" "$request_rate" "$max_time" "$recursion_depth" "$output_format" "${headers[@]}" || {
+      step_status=$?
+      ((status == 0)) && status=$step_status
+    }
+  fi
+  if [[ "$mode" == "vhost" || "$mode" == "all" ]]; then
+    local vhost_wordlist="$wordlist"
+    [[ -n "$vhost_wordlist" && "$vhost_wordlist" != "${AEGISCOPE_ROOT}/wordlists/web-small.txt" ]] || vhost_wordlist="${AEGISCOPE_ROOT}/wordlists/vhosts-small.txt"
+    run_vhost "$url" "$vhost_wordlist" "$request_rate" "${headers[@]}" || {
+      step_status=$?
+      ((status == 0)) && status=$step_status
+    }
+  fi
+  if [[ "$mode" == "dns" || "$mode" == "all" ]]; then
+    local dns_wordlist="$wordlist"
+    [[ -n "$dns_wordlist" && "$dns_wordlist" != "${AEGISCOPE_ROOT}/wordlists/web-small.txt" ]] || dns_wordlist="${AEGISCOPE_ROOT}/wordlists/vhosts-small.txt"
+    run_dns_enum "$target" "$dns_wordlist" "$request_rate" || {
+      step_status=$?
+      ((status == 0)) && status=$step_status
+    }
+  fi
+  if [[ "$mode" == "subdomains" || "$mode" == "all" ]]; then run_subdomains "$target" "$request_rate" || {
+    step_status=$?
+    ((status == 0)) && status=$step_status
+  }; fi
+  if [[ "$mode" == "http" || "$mode" == "all" ]]; then run_http_analysis "$url" || {
+    step_status=$?
+    ((status == 0)) && status=$step_status
+  }; fi
+  if [[ "$mode" == "tech" || "$mode" == "all" ]]; then run_technology_analysis "$url" "$request_rate" || {
+    step_status=$?
+    ((status == 0)) && status=$step_status
+  }; fi
+  if [[ "$mode" == "tls" || "$mode" == "all" ]]; then run_tls_analysis "$url" || {
+    step_status=$?
+    ((status == 0)) && status=$step_status
+  }; fi
+  collect_new_artifacts
+  write_manifest "$status"
+  return "$status"
+}
+
+recon_usage() {
+  cat <<'EOF'
+Usage: aegiscope recon --target URL|DOMAIN [options]
+
+Stages follow OWASP WSTG information gathering and network context:
+  network, intel, server, metafiles, applications, entry-points, paths,
+  architecture, all
+
+Options:
+  --stage STAGE            all is the default
+  --request-rate N
+  --external-intel        Include Shodan/IPinfo lookups during the all stage
+  --scope-file FILE
+  --authorized
+EOF
+}
+
+recon_network() {
+  local target="$1" host
+  host="$(normalize_scope_target "$target")"
+  mkdir -p "${RUN_DIR}/00-network-basics"
+  if command -v ping >/dev/null 2>&1; then
+    run_logged_capture "${RUN_DIR}/00-network-basics/ping.txt" ping -c 4 "$host" || true
+  fi
+  if command -v traceroute >/dev/null 2>&1; then
+    run_logged_capture "${RUN_DIR}/00-network-basics/traceroute.txt" traceroute "$host" || true
+  elif command -v tracepath >/dev/null 2>&1; then
+    run_logged_capture "${RUN_DIR}/00-network-basics/tracepath.txt" tracepath "$host" || true
+  fi
+}
+
+recon_intel() {
+  local target="$1" enabled="$2" host ip token
+  host="$(normalize_scope_target "$target")"
+  mkdir -p "${RUN_DIR}/00-external-intelligence"
+  if [[ "$enabled" != "1" ]]; then
+    printf 'External intelligence lookups were not requested. Use --external-intel.\n' >"${RUN_DIR}/00-external-intelligence/README.txt"
+    add_artifact "${RUN_DIR}/00-external-intelligence/README.txt"
+    return 0
+  fi
+  ip="$host"
+  if [[ ! "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && command -v dig >/dev/null 2>&1; then
+    run_logged_capture "${RUN_DIR}/00-external-intelligence/resolved-ip.txt" dig +short A "$host" || true
+    ip="$(head -n 1 "${RUN_DIR}/00-external-intelligence/resolved-ip.txt")"
+  fi
+  [[ -n "$ip" ]] || {
+    warn "could not resolve an IPv4 address for external intelligence"
+    return 1
+  }
+  if command -v shodan >/dev/null 2>&1; then
+    run_logged_capture "${RUN_DIR}/00-external-intelligence/shodan.txt" shodan host "$ip" || true
+  else
+    warn "Shodan CLI is not installed; skipping Shodan host intelligence"
+  fi
+  if command -v curl >/dev/null 2>&1; then
+    token="${IPINFO_TOKEN:-}"
+    if [[ -n "$token" ]]; then
+      run_logged_sensitive_capture "${RUN_DIR}/00-external-intelligence/ipinfo.json" curl --silent --show-error --connect-timeout 10 --max-time 30 -H "Authorization: Bearer ${token}" --url "https://ipinfo.io/${ip}/json" || true
+    else
+      run_logged_capture "${RUN_DIR}/00-external-intelligence/ipinfo.json" curl --silent --show-error --connect-timeout 10 --max-time 30 --url "https://ipinfo.io/${ip}/json" || true
+    fi
+  fi
+}
+
+recon_server() {
+  local target="$1" url="$2" host
+  host="$(normalize_scope_target "$target")"
+  mkdir -p "${RUN_DIR}/01-server-fingerprint"
+  if command -v dig >/dev/null 2>&1; then
+    run_logged_capture "${RUN_DIR}/01-server-fingerprint/dns-a.txt" dig A "$host" || true
+    run_logged_capture "${RUN_DIR}/01-server-fingerprint/dns-aaaa.txt" dig AAAA "$host" || true
+  fi
+  if command -v whois >/dev/null 2>&1; then
+    run_logged_capture "${RUN_DIR}/01-server-fingerprint/whois.txt" whois "$host" || true
+  fi
+  run_http_analysis "$url" "01-server-fingerprint/http" || true
+}
+
+recon_metafiles() {
+  local url="$1" name
+  require_cmd curl
+  mkdir -p "${RUN_DIR}/02-metafiles"
+  for name in robots.txt sitemap.xml .well-known/security.txt; do
+    run_logged_capture "${RUN_DIR}/02-metafiles/$(sanitize_name "$name")" curl --silent --show-error --location --connect-timeout 10 --max-time 30 --url "${url%/}/${name}" || true
+  done
+}
+
+recon_applications() {
+  local url="$1" rate="$2"
+  mkdir -p "${RUN_DIR}/03-applications"
+  if command -v httpx >/dev/null 2>&1; then
+    run_logged_capture "${RUN_DIR}/03-applications/httpx.jsonl" httpx -u "$url" -rl "$rate" -silent -status-code -title -tech-detect -web-server -ip -cname -json || true
+  elif command -v whatweb >/dev/null 2>&1; then
+    run_logged_capture "${RUN_DIR}/03-applications/whatweb.txt" whatweb "$url" || true
+  else
+    warn "application fingerprinting is richer with httpx or whatweb installed"
+  fi
+}
+
+recon_entry_points() {
+  local url="$1" html="${RUN_DIR}/04-entry-points/page.html" output="${RUN_DIR}/04-entry-points/entry-points.txt"
+  mkdir -p "${RUN_DIR}/04-entry-points"
+  run_logged_capture "$html" curl --silent --show-error --location --connect-timeout 10 --max-time 30 --url "$url" || true
+  grep -Eio "<(form|input|button|a)[^>]*(action|href|name|type)=[\"'][^\"']+" "$html" 2>/dev/null | sort -u >"$output" || true
+  add_artifact "$output"
+}
+
+recon_paths() {
+  local source="${RUN_DIR}/04-entry-points/page.html" output="${RUN_DIR}/05-execution-paths/paths.txt"
+  mkdir -p "${RUN_DIR}/05-execution-paths"
+  if [[ -f "$source" ]]; then
+    grep -Eio "(href|action)=[\"'][^\"'#?]+" "$source" 2>/dev/null | sed -E "s/^[^=]+=[\"']//I" | sort -u >"$output" || true
+  else
+    printf 'Run the entry-points stage to collect passive execution paths.\n' >"$output"
+  fi
+  add_artifact "$output"
+}
+
+recon_architecture() {
+  local target="$1" url="$2" rate="$3" host
+  host="$(normalize_scope_target "$target")"
+  mkdir -p "${RUN_DIR}/06-architecture"
+  if command -v dig >/dev/null 2>&1; then
+    run_logged_capture "${RUN_DIR}/06-architecture/dns-ns.txt" dig NS "$host" || true
+    run_logged_capture "${RUN_DIR}/06-architecture/dns-mx.txt" dig MX "$host" || true
+    run_logged_capture "${RUN_DIR}/06-architecture/dns-cname.txt" dig CNAME "$host" || true
+    run_logged_capture "${RUN_DIR}/06-architecture/dns-soa.txt" dig SOA "$host" || true
+  fi
+  if command -v traceroute >/dev/null 2>&1; then
+    run_logged_capture "${RUN_DIR}/06-architecture/traceroute.txt" traceroute "$host" || true
+  elif command -v tracepath >/dev/null 2>&1; then
+    run_logged_capture "${RUN_DIR}/06-architecture/tracepath.txt" tracepath "$host" || true
+  fi
+  if command -v httpx >/dev/null 2>&1; then
+    run_logged_capture "${RUN_DIR}/06-architecture/httpx.jsonl" httpx -u "$url" -rl "$rate" -silent -status-code -title -tech-detect -web-server -ip -cname -asn -cdn -json || true
+  fi
+}
+
+recon_command() {
+  local target="" stage="all" request_rate="$AEGISCOPE_MAX_RATE" authorized=0 external_intel=0 url status=0
+  while (($#)); do
+    case "$1" in
+      --target)
+        [[ $# -ge 2 ]] || die "--target needs a value"
+        target="$2"
+        shift 2
+        ;;
+      --stage)
+        [[ $# -ge 2 ]] || die "--stage needs a value"
+        stage="$2"
+        shift 2
+        ;;
+      --request-rate | --rate)
+        [[ $# -ge 2 ]] || die "$1 needs a value"
+        request_rate="$2"
+        shift 2
+        ;;
+      --external-intel)
+        external_intel=1
+        shift
+        ;;
+      --scope-file)
+        [[ $# -ge 2 ]] || die "--scope-file needs a value"
+        AEGISCOPE_SCOPE_FILE="$2"
+        shift 2
+        ;;
+      --authorized)
+        authorized=1
+        shift
+        ;;
+      -h | --help)
+        recon_usage
+        return 0
+        ;;
+      *) die "unknown recon option: $1" ;;
+    esac
+  done
+  [[ -n "$target" ]] || die "recon requires --target"
+  validate_rate "$request_rate"
+  case "$stage" in network | intel | server | metafiles | applications | entry-points | paths | architecture | all) ;; *) die "unknown recon stage: $stage" ;; esac
+  [[ "$stage" != "intel" ]] || external_intel=1
+  authorize_target "$target" "$authorized"
+  url="$(ensure_url "$target")"
+  create_run "$target" "recon-${stage}"
+  if [[ "$stage" == "network" || "$stage" == "all" ]]; then recon_network "$target"; fi
+  if [[ "$stage" == "intel" || "$stage" == "all" ]]; then recon_intel "$target" "$external_intel"; fi
+  if [[ "$stage" == "server" || "$stage" == "all" ]]; then recon_server "$target" "$url"; fi
+  if [[ "$stage" == "metafiles" || "$stage" == "all" ]]; then recon_metafiles "$url"; fi
+  if [[ "$stage" == "applications" || "$stage" == "all" ]]; then recon_applications "$url" "$request_rate"; fi
+  if [[ "$stage" == "entry-points" || "$stage" == "all" ]]; then recon_entry_points "$url"; fi
+  if [[ "$stage" == "paths" || "$stage" == "all" ]]; then recon_paths; fi
+  if [[ "$stage" == "architecture" || "$stage" == "all" ]]; then recon_architecture "$target" "$url" "$request_rate"; fi
+  collect_new_artifacts
+  write_manifest "$status"
+}
+
+xss_usage() {
+  cat <<'EOF'
+Usage: aegiscope xss --target URL [options]
+
+Performs context-aware XSS discovery with a harmless unique canary and a
+non-executable punctuation probe. It does not inject scripts or event handlers.
+
+Options:
+  --parameter NAME         Repeatable query/body parameter (default: q)
+  --discover-parameters   Extract query-string and HTML form parameter names
+  --method get|post        Request method (default: get)
+  --header 'Name: value'   Repeatable HTTP/auth header
+  --request-rate N         Maximum sequential requests per second
+  --max-response-bytes N  Per-response cap (default: 2097152; max: 10485760)
+  --scope-file FILE
+  --authorized
+EOF
+}
+
+xss_discover_parameters() {
+  local target="$1" output="$2" body="$3" headers_file="$4" query pair name header
+  shift 4
+  local -a cmd=(curl --silent --show-error --location --max-redirs 5 --connect-timeout 10 --max-time 30 --dump-header "$headers_file" --output "$body")
+  for header in "$@"; do cmd+=(-H "$header"); done
+  cmd+=(--url "$target")
+  run_logged_sensitive "" "${cmd[@]}" || true
+  [[ ! -e "$body" ]] || add_artifact "$body"
+  [[ ! -e "$headers_file" ]] || add_artifact "$headers_file"
+  : >"$output"
+  if [[ "$target" == *\?* ]]; then
+    query="${target#*\?}"
+    query="${query%%#*}"
+    IFS='&' read -r -a query_pairs <<<"$query"
+    for pair in "${query_pairs[@]}"; do
+      name="${pair%%=*}"
+      [[ "$name" =~ ^[a-zA-Z0-9_.:-]+$ ]] && printf '%s\n' "$name" >>"$output"
+    done
+  fi
+  if [[ -s "$body" ]]; then
+    grep -Eoi 'name[[:space:]]*=[[:space:]]*"[a-zA-Z0-9_.:-]+"' "$body" | sed -E 's/.*"([a-zA-Z0-9_.:-]+)"/\1/' >>"$output" || true
+    grep -Eoi "name[[:space:]]*=[[:space:]]*'[a-zA-Z0-9_.:-]+'" "$body" | sed -E "s/.*'([a-zA-Z0-9_.:-]+)'/\1/" >>"$output" || true
+  fi
+  sort -u "$output" -o "$output"
+  add_artifact "$output"
+}
+
+xss_command() {
+  local target="" method="get" request_rate="$AEGISCOPE_MAX_RATE" authorized=0 marker probe delay status=0 index parameter safe body headers_file report results snippets severity reflected raw_probe encoded content_type csp max_response_bytes=2097152 discover=0 baseline_body baseline_headers discovered_file dom_report header
+  local -a parameters=() headers=() cmd
+  local -A seen_parameters=()
+  while (($#)); do
+    case "$1" in
+      --target)
+        [[ $# -ge 2 ]] || die "--target needs a value"
+        target="$2"
+        shift 2
+        ;;
+      --parameter)
+        [[ $# -ge 2 ]] || die "--parameter needs a value"
+        parameters+=("$2")
+        shift 2
+        ;;
+      --discover-parameters)
+        discover=1
+        shift
+        ;;
+      --method)
+        [[ $# -ge 2 ]] || die "--method needs a value"
+        method="${2,,}"
+        shift 2
+        ;;
+      --header)
+        [[ $# -ge 2 ]] || die "--header needs a value"
+        headers+=("$2")
+        shift 2
+        ;;
+      --request-rate | --rate)
+        [[ $# -ge 2 ]] || die "$1 needs a value"
+        request_rate="$2"
+        shift 2
+        ;;
+      --max-response-bytes)
+        [[ $# -ge 2 ]] || die "--max-response-bytes needs a value"
+        max_response_bytes="$2"
+        shift 2
+        ;;
+      --scope-file)
+        [[ $# -ge 2 ]] || die "--scope-file needs a value"
+        AEGISCOPE_SCOPE_FILE="$2"
+        shift 2
+        ;;
+      --authorized)
+        authorized=1
+        shift
+        ;;
+      -h | --help)
+        xss_usage
+        return 0
+        ;;
+      *) die "unknown xss option: $1" ;;
+    esac
+  done
+  [[ -n "$target" ]] || die "xss requires --target"
+  [[ "$target" =~ ^https?:// ]] || die "xss target must be an HTTP(S) URL"
+  case "$method" in get | post) ;; *) die "xss --method must be get or post" ;; esac
+  validate_rate "$request_rate"
+  is_positive_integer "$max_response_bytes" || die "max response bytes must be a positive integer"
+  ((max_response_bytes <= 10485760)) || die "max response bytes exceeds the hard 10485760-byte ceiling"
+  for parameter in "${parameters[@]}"; do
+    [[ "$parameter" =~ ^[a-zA-Z0-9_.:-]+$ ]] || die "invalid parameter name: $parameter"
+    seen_parameters[$parameter]=1
+  done
+  authorize_target "$target" "$authorized"
+  require_cmd curl
+  create_run "$target" "xss-reflection"
+  if ((discover == 1)); then
+    baseline_body="${RUN_DIR}/xss-baseline-body.txt"
+    baseline_headers="${RUN_DIR}/xss-baseline-headers.txt"
+    discovered_file="${RUN_DIR}/xss-discovered-parameters.txt"
+    xss_discover_parameters "$target" "$discovered_file" "$baseline_body" "$baseline_headers" "${headers[@]}"
+    while IFS= read -r parameter; do
+      [[ "$parameter" =~ ^[a-zA-Z0-9_.:-]+$ ]] || continue
+      [[ -z "${seen_parameters[$parameter]:-}" ]] || continue
+      parameters+=("$parameter")
+      seen_parameters[$parameter]=1
+    done <"$discovered_file"
+  fi
+  ((${#parameters[@]} > 0)) || parameters=(q)
+  ((${#parameters[@]} <= 20)) || die "a maximum of 20 parameters can be audited per run"
+  marker="AEGISCOPE_CANARY_$(date -u +%Y%m%d%H%M%S)_${RANDOM}"
+  probe="${marker}_'\"<>&/"
+  report="${RUN_DIR}/xss-reflection-report.txt"
+  results="${RUN_DIR}/xss-results.jsonl"
+  printf 'IronCrypt Aegiscope context-aware, non-executing XSS audit\nMarker: %s\nMethod: %s\n\n' "$marker" "$method" >"$report"
+  : >"$results"
+  delay="$(awk -v rate="$request_rate" 'BEGIN { printf "%.3f", 1 / rate }')"
+  for index in "${!parameters[@]}"; do
+    parameter="${parameters[$index]}"
+    safe="$(sanitize_name "$parameter")"
+    body="${RUN_DIR}/xss-${safe}-body.txt"
+    headers_file="${RUN_DIR}/xss-${safe}-headers.txt"
+    snippets="${RUN_DIR}/xss-${safe}-context.txt"
+    cmd=(curl --silent --show-error --location --max-redirs 5 --connect-timeout 10 --max-time 30 --max-filesize "$max_response_bytes" --dump-header "$headers_file" --output "$body")
+    for header in "${headers[@]}"; do cmd+=(-H "$header"); done
+    if [[ "$method" == "get" ]]; then
+      cmd+=(--get --data-urlencode "${parameter}=${probe}" --url "$target")
+    else
+      cmd+=(--request POST --data-urlencode "${parameter}=${probe}" --url "$target")
+    fi
+    run_logged_sensitive "" "${cmd[@]}" || status=$?
+    [[ ! -e "$body" ]] || add_artifact "$body"
+    [[ ! -e "$headers_file" ]] || add_artifact "$headers_file"
+    reflected=no
+    raw_probe=no
+    encoded=no
+    severity=none
+    grep -aFq "$marker" "$body" 2>/dev/null && reflected=yes
+    grep -aFq "$probe" "$body" 2>/dev/null && raw_probe=yes
+    if grep -aEiq '&(lt|gt|quot|apos|#0*39|#x0*27);' "$body" 2>/dev/null; then encoded=yes; fi
+    if [[ "$raw_probe" == yes ]]; then
+      severity=high-risk-context
+    elif [[ "$reflected" == yes ]]; then
+      severity=review-context
+    fi
+    grep -anF "$marker" "$body" 2>/dev/null | head -n 5 >"$snippets" || true
+    add_artifact "$snippets"
+    content_type="$(header_value Content-Type "$headers_file")"
+    csp="$(header_value Content-Security-Policy "$headers_file")"
+    printf 'parameter=%s reflected=%s raw_punctuation=%s encoded_evidence=%s classification=%s\n' "$parameter" "$reflected" "$raw_probe" "$encoded" "$severity" >>"$report"
+    printf '  content_type=%s\n  content_security_policy=%s\n  context_artifact=%s\n' "$content_type" "$csp" "${snippets#"$RUN_DIR"/}" >>"$report"
+    printf '{"parameter":"%s","reflected":%s,"raw_punctuation":%s,"encoded_evidence":%s,"classification":"%s","content_type":"%s","content_security_policy":"%s","context_artifact":"%s"}\n' \
+      "$(json_escape "$parameter")" "$([[ "$reflected" == yes ]] && printf true || printf false)" "$([[ "$raw_probe" == yes ]] && printf true || printf false)" "$([[ "$encoded" == yes ]] && printf true || printf false)" \
+      "$severity" "$(json_escape "$content_type")" "$(json_escape "$csp")" "$(json_escape "${snippets#"$RUN_DIR"/}")" >>"$results"
+    if ((index + 1 < ${#parameters[@]})); then sleep "$delay"; fi
+  done
+  dom_report="${RUN_DIR}/xss-dom-indicators.txt"
+  grep -aEin 'innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval[[:space:]]*\(|setTimeout[[:space:]]*\(|location\.(hash|search)|postMessage' "${RUN_DIR}"/xss-*-body.txt >"$dom_report" 2>/dev/null || true
+  printf '\nDOM source/sink indicators: %s\n' "${dom_report#"$RUN_DIR"/}" >>"$report"
+  printf 'A reflected canary or source/sink indicator is an investigation lead, not proof that executable XSS exists. Validate findings manually within the authorized assessment.\n' >>"$report"
+  add_artifact "$report"
+  add_artifact "$results"
+  add_artifact "$dom_report"
+  write_manifest "$status"
+  return "$status"
+}
+
+load_usage() {
+  cat <<EOF
+Usage: aegiscope load|ddos --target URL [options]
+
+Runs a bounded, single-source resilience check. This is the supported DDoS
+category: it does not coordinate distributed traffic or bypass hard limits.
+
+Options:
+  --duration SECONDS       Default 10, hard maximum ${AEGISCOPE_MAX_LOAD_DURATION}
+  --request-rate N         Default 10, capped at ${AEGISCOPE_MAX_RATE}
+  --concurrency N          Default 2, hard maximum ${AEGISCOPE_MAX_LOAD_CONCURRENCY}
+  --engine auto|k6|hey|curl
+  --method METHOD          GET, HEAD, POST, PUT, PATCH, DELETE, or OPTIONS
+  --header 'Name: value'   Repeatable HTTP/auth header; secrets are redacted
+  --body STRING            Request body; always redacted from the manifest
+  --max-error-rate N       Fail above this percentage (default: 5)
+  --p95-ms N               Fail above this p95 latency in ms (default: 1000)
+  --scope-file FILE
+  --authorized
+EOF
+}
+
+headers_to_json() {
+  local header name value first=1
+  printf '{'
+  for header in "$@"; do
+    name="${header%%:*}"
+    value="${header#*:}"
+    value="${value# }"
+    ((first == 0)) && printf ','
+    first=0
+    printf '"%s":"%s"' "$(json_escape "$name")" "$(json_escape "$value")"
+  done
+  printf '}'
+}
+
+assess_load_csv() {
+  local csv="$1" time_column="$2" status_column="$3" max_error_rate="$4" max_p95_ms="$5" engine="$6"
+  local summary="${RUN_DIR}/load-assessment.json" count failed average error_rate p95_seconds p95_ms passed=true
+  count="$(awk -F, -v tc="$time_column" 'NR>1 && $tc ~ /^[0-9.]+$/ { count++ } END { print count+0 }' "$csv")"
+  failed="$(awk -F, -v sc="$status_column" 'NR>1 && $sc ~ /^[0-9]+$/ && ($sc < 200 || $sc >= 500) { failed++ } END { print failed+0 }' "$csv")"
+  average="$(awk -F, -v tc="$time_column" 'NR>1 && $tc ~ /^[0-9.]+$/ { total += $tc; count++ } END { printf "%.6f", (count ? total/count : 0) }' "$csv")"
+  error_rate="$(awk -v failed="$failed" -v count="$count" 'BEGIN { printf "%.2f", (count ? failed*100/count : 100) }')"
+  p95_seconds="$(awk -F, -v tc="$time_column" 'NR>1 && $tc ~ /^[0-9.]+$/ { print $tc }' "$csv" | sort -n | awk '{ values[NR]=$1 } END { if (NR == 0) { print 0 } else { index=int((NR*95+99)/100); if (index < 1) index=1; if (index > NR) index=NR; printf "%.6f", values[index] } }')"
+  p95_ms="$(awk -v seconds="$p95_seconds" 'BEGIN { printf "%.2f", seconds*1000 }')"
+  if awk -v actual="$error_rate" -v maximum="$max_error_rate" 'BEGIN { exit !(actual > maximum) }'; then passed=false; fi
+  if awk -v actual="$p95_ms" -v maximum="$max_p95_ms" 'BEGIN { exit !(actual > maximum) }'; then passed=false; fi
+  if ((count == 0)); then passed=false; fi
+  printf '{"engine":"%s","requests":%d,"failed":%d,"error_rate_percent":%s,"average_ms":%.2f,"p95_ms":%s,"thresholds":{"max_error_rate_percent":%d,"max_p95_ms":%d},"passed":%s}\n' \
+    "$engine" "$count" "$failed" "$error_rate" "$(awk -v seconds="$average" 'BEGIN { print seconds*1000 }')" "$p95_ms" "$max_error_rate" "$max_p95_ms" "$passed" >"$summary"
+  add_artifact "$summary"
+  [[ "$passed" == true ]]
+}
+
+run_k6_load() {
+  local target="$1" duration="$2" rate="$3" concurrency="$4" method="$5" body="$6" max_error_rate="$7" max_p95_ms="$8" script="${RUN_DIR}/k6-load.js" summary="${RUN_DIR}/k6-summary.json" headers_json
+  shift 8
+  headers_json="$(headers_to_json "$@")"
+  cat >"$script" <<'EOF'
+import http from 'k6/http';
+import { check } from 'k6';
+
+export const options = {
+  thresholds: {
+    http_req_failed: [`rate<${Number(__ENV.MAX_ERROR_RATE) / 100}`],
+    http_req_duration: [`p(95)<${Number(__ENV.P95_MS)}`],
+  },
+  scenarios: {
+    bounded: {
+      executor: 'constant-arrival-rate',
+      rate: Number(__ENV.RATE),
+      timeUnit: '1s',
+      duration: `${__ENV.DURATION}s`,
+      preAllocatedVUs: Number(__ENV.CONCURRENCY),
+      maxVUs: Number(__ENV.CONCURRENCY),
+    },
+  },
+};
+
+export default function () {
+  const headers = JSON.parse(__ENV.HEADERS_JSON || '{}');
+  const response = http.request(__ENV.METHOD, __ENV.TARGET_URL, __ENV.BODY || null, { headers });
+  check(response, { 'status below 500': (r) => r.status < 500 });
+}
+EOF
+  add_artifact "$script"
+  run_logged_sensitive "$summary" k6 run --quiet --summary-export "$summary" -e "TARGET_URL=${target}" -e "RATE=${rate}" -e "DURATION=${duration}" -e "CONCURRENCY=${concurrency}" -e "METHOD=${method}" -e "BODY=${body}" -e "HEADERS_JSON=${headers_json}" -e "MAX_ERROR_RATE=${max_error_rate}" -e "P95_MS=${max_p95_ms}" "$script"
+}
+
+run_hey_load() {
+  local target="$1" duration="$2" rate="$3" concurrency="$4" method="$5" body="$6" max_error_rate="$7" max_p95_ms="$8" per_worker output="${RUN_DIR}/hey-results.csv" command_status=0 assessment_status=0 header
+  shift 8
+  local -a cmd
+  ((concurrency <= rate)) || concurrency="$rate"
+  per_worker=$((rate / concurrency))
+  ((per_worker > 0)) || per_worker=1
+  cmd=(hey -z "${duration}s" -q "$per_worker" -c "$concurrency" -o csv -m "$method")
+  for header in "$@"; do cmd+=(-H "$header"); done
+  [[ -z "$body" ]] || cmd+=(-d "$body")
+  cmd+=("$target")
+  run_logged_sensitive_capture "$output" "${cmd[@]}" || command_status=$?
+  assess_load_csv "$output" 1 7 "$max_error_rate" "$max_p95_ms" hey || assessment_status=$?
+  ((command_status == 0)) || return "$command_status"
+  return "$assessment_status"
+}
+
+run_curl_load() {
+  local target="$1" duration="$2" rate="$3" total_limit="$4" method="$5" body="$6" max_error_rate="$7" max_p95_ms="$8" output="${RUN_DIR}/curl-load.csv"
+  shift 8
+  local started end count=0 result request_status=0 assessment_status=0 delay header
+  local -a cmd
+  started=$SECONDS
+  end=$((started + duration))
+  delay="$(awk -v rate="$rate" 'BEGIN { printf "%.3f", 1 / rate }')"
+  printf 'sequence,http_status,time_total\n' >"$output"
+  cmd=(curl --silent --show-error --output /dev/null --connect-timeout 5 --max-time 10 --write-out '%{http_code},%{time_total}' --request "$method")
+  for header in "$@"; do cmd+=(-H "$header"); done
+  [[ -z "$body" ]] || cmd+=(--data-raw "$body")
+  cmd+=(--url "$target")
+  RUN_COMMANDS+=("bounded-curl-load --duration $(printf %q "$duration") --request-rate $(printf %q "$rate") $(sensitive_command_string "${cmd[@]}")")
+  while ((SECONDS < end && count < total_limit)); do
+    count=$((count + 1))
+    result="$("${cmd[@]}")" || request_status=$?
+    printf '%d,%s\n' "$count" "${result:-000,0}" >>"$output"
+    sleep "$delay"
+  done
+  add_artifact "$output"
+  assess_load_csv "$output" 3 2 "$max_error_rate" "$max_p95_ms" curl || assessment_status=$?
+  ((request_status == 0)) || return "$request_status"
+  return "$assessment_status"
+}
+
+load_command() {
+  local target="" duration=10 request_rate=10 concurrency=2 engine="auto" authorized=0 total status=0 method=GET body="" max_error_rate=5 max_p95_ms=1000 plan header_name first
+  local -a headers=()
+  while (($#)); do
+    case "$1" in
+      --target)
+        [[ $# -ge 2 ]] || die "--target needs a value"
+        target="$2"
+        shift 2
+        ;;
+      --duration)
+        [[ $# -ge 2 ]] || die "--duration needs a value"
+        duration="$2"
+        shift 2
+        ;;
+      --request-rate | --rate)
+        [[ $# -ge 2 ]] || die "$1 needs a value"
+        request_rate="$2"
+        shift 2
+        ;;
+      --concurrency)
+        [[ $# -ge 2 ]] || die "--concurrency needs a value"
+        concurrency="$2"
+        shift 2
+        ;;
+      --engine)
+        [[ $# -ge 2 ]] || die "--engine needs a value"
+        engine="${2,,}"
+        shift 2
+        ;;
+      --method)
+        [[ $# -ge 2 ]] || die "--method needs a value"
+        method="${2^^}"
+        shift 2
+        ;;
+      --header)
+        [[ $# -ge 2 ]] || die "--header needs a value"
+        [[ "$2" == *:* ]] || die "header must use 'Name: value' format"
+        headers+=("$2")
+        shift 2
+        ;;
+      --body)
+        [[ $# -ge 2 ]] || die "--body needs a value"
+        body="$2"
+        shift 2
+        ;;
+      --max-error-rate)
+        [[ $# -ge 2 ]] || die "--max-error-rate needs a value"
+        max_error_rate="$2"
+        shift 2
+        ;;
+      --p95-ms)
+        [[ $# -ge 2 ]] || die "--p95-ms needs a value"
+        max_p95_ms="$2"
+        shift 2
+        ;;
+      --scope-file)
+        [[ $# -ge 2 ]] || die "--scope-file needs a value"
+        AEGISCOPE_SCOPE_FILE="$2"
+        shift 2
+        ;;
+      --authorized)
+        authorized=1
+        shift
+        ;;
+      -h | --help)
+        load_usage
+        return 0
+        ;;
+      *) die "unknown load option: $1" ;;
+    esac
+  done
+  [[ -n "$target" ]] || die "load requires --target"
+  [[ "$target" =~ ^https?:// ]] || die "load target must be an HTTP(S) URL"
+  is_positive_integer "$duration" || die "duration must be a positive integer"
+  ((duration <= AEGISCOPE_MAX_LOAD_DURATION)) || die "duration exceeds hard maximum ${AEGISCOPE_MAX_LOAD_DURATION} seconds"
+  validate_rate "$request_rate"
+  is_positive_integer "$concurrency" || die "concurrency must be a positive integer"
+  ((concurrency <= AEGISCOPE_MAX_LOAD_CONCURRENCY)) || die "concurrency exceeds hard maximum ${AEGISCOPE_MAX_LOAD_CONCURRENCY}"
+  [[ "$max_error_rate" =~ ^[0-9]+$ ]] && ((max_error_rate <= 100)) || die "max error rate must be an integer from 0 to 100"
+  is_positive_integer "$max_p95_ms" || die "p95 threshold must be a positive integer"
+  case "$method" in GET | HEAD | POST | PUT | PATCH | DELETE | OPTIONS) ;; *) die "unsupported HTTP method: $method" ;; esac
+  total=$((duration * request_rate))
+  ((total <= AEGISCOPE_MAX_LOAD_REQUESTS)) || die "duration × rate exceeds the hard request budget ${AEGISCOPE_MAX_LOAD_REQUESTS}"
+  case "$engine" in auto | k6 | hey | curl) ;; *) die "unsupported load engine: $engine" ;; esac
+  authorize_target "$target" "$authorized"
+  if [[ "$engine" == "auto" ]]; then
+    if command -v k6 >/dev/null 2>&1; then engine=k6; elif command -v hey >/dev/null 2>&1; then engine=hey; else engine=curl; fi
+  fi
+  command -v "$engine" >/dev/null 2>&1 || die "selected load engine is not installed: $engine"
+  create_run "$target" "load-${engine}"
+  plan="${RUN_DIR}/load-plan.json"
+  {
+    printf '{"engine":"%s","method":"%s","duration_seconds":%d,"request_rate":%d,"concurrency":%d,"request_budget":%d,"body_bytes":%d,"headers":[' "$engine" "$method" "$duration" "$request_rate" "$concurrency" "$total" "${#body}"
+    first=1
+    for header in "${headers[@]}"; do
+      header_name="${header%%:*}"
+      ((first == 0)) && printf ','
+      first=0
+      printf '"%s"' "$(json_escape "$header_name")"
+    done
+    printf '],"thresholds":{"max_error_rate_percent":%d,"max_p95_ms":%d}}\n' "$max_error_rate" "$max_p95_ms"
+  } >"$plan"
+  add_artifact "$plan"
+  ui_caution
+  case "$engine" in
+    k6) run_k6_load "$target" "$duration" "$request_rate" "$concurrency" "$method" "$body" "$max_error_rate" "$max_p95_ms" "${headers[@]}" || status=$? ;;
+    hey) run_hey_load "$target" "$duration" "$request_rate" "$concurrency" "$method" "$body" "$max_error_rate" "$max_p95_ms" "${headers[@]}" || status=$? ;;
+    curl) run_curl_load "$target" "$duration" "$request_rate" "$total" "$method" "$body" "$max_error_rate" "$max_p95_ms" "${headers[@]}" || status=$? ;;
+  esac
+  collect_new_artifacts
+  write_manifest "$status"
+  return "$status"
+}
+
+compare_command() {
+  local baseline="" current="" output
+  local -a runs=()
+  while (($#)); do
+    case "$1" in
+      --baseline)
+        [[ $# -ge 2 ]] || die "--baseline needs a value"
+        baseline="$2"
+        shift 2
+        ;;
+      --current)
+        [[ $# -ge 2 ]] || die "--current needs a value"
+        current="$2"
+        shift 2
+        ;;
+      -h | --help)
+        printf 'Usage: aegiscope compare [--baseline RUN_DIRECTORY] [--current RUN_DIRECTORY]\n'
+        return 0
+        ;;
+      *) die "unknown compare option: $1" ;;
+    esac
+  done
+  if [[ -z "$baseline" || -z "$current" ]]; then
+    [[ -d "$AEGISCOPE_RESULTS_ROOT" ]] || die "no result runs found"
+    mapfile -t runs < <(find "$AEGISCOPE_RESULTS_ROOT" -mindepth 1 -maxdepth 1 -type d -print | sort)
+    ((${#runs[@]} >= 2)) || die "at least two runs are required for comparison"
+    [[ -n "$current" ]] || current="${runs[$((${#runs[@]} - 1))]}"
+    [[ -n "$baseline" ]] || baseline="${runs[$((${#runs[@]} - 2))]}"
+  fi
+  [[ -f "$baseline/manifest.json" ]] || die "baseline manifest not found"
+  [[ -f "$current/manifest.json" ]] || die "current manifest not found"
+  output="${current}/comparison-to-$(sanitize_name "$(basename "$baseline")").md"
+  {
+    printf '# IronCrypt Aegiscope run comparison\n\n'
+    printf -- '- Baseline: `%s`\n- Current: `%s`\n\n' "$baseline" "$current"
+    printf '## Manifest differences\n\n```diff\n'
+    diff -u "$baseline/manifest.json" "$current/manifest.json" || true
+    printf '```\n'
+  } >"$output"
+  printf 'Comparison: %s\n' "$output"
+}
+
+doctor_command() {
+  local tool category state version missing_core=0
+  printf '%s %s\n' "$AEGISCOPE_NAME" "$AEGISCOPE_VERSION"
+  printf 'Scope file: %s (%s)\n' "$AEGISCOPE_SCOPE_FILE" "$([[ -f "$AEGISCOPE_SCOPE_FILE" ]] && printf present || printf missing)"
+  printf 'Results root: %s\n' "$AEGISCOPE_RESULTS_ROOT"
+  printf 'Rate ceiling: %s\n\n' "$AEGISCOPE_MAX_RATE"
+  printf '%-14s %-10s %s\n' TOOL CATEGORY STATUS
+  for tool in bash curl nmap openssl jq dig whois ping traceroute tracepath ffuf gobuster subfinder httpx testssl.sh whatweb shodan k6 hey shellcheck shfmt bats; do
+    case "$tool" in bash | curl) category="core" ;; nmap | openssl | jq | dig | whois | ping | traceroute) category="recommended" ;; *) category="optional" ;; esac
+    if command -v "$tool" >/dev/null 2>&1; then
+      state="installed"
+      version="$(tool_version "$tool")"
+    else
+      state="missing"
+      version=""
+      [[ "$category" != core ]] || missing_core=1
+    fi
+    printf '%-14s %-10s %s %s\n' "$tool" "$category" "$state" "$version"
+  done
+  return "$missing_core"
+}
+
+report_command() {
+  local run_dir="" manifest report artifact
+  while (($#)); do
+    case "$1" in
+      --run)
+        [[ $# -ge 2 ]] || die "--run needs a value"
+        run_dir="$2"
+        shift 2
+        ;;
+      -h | --help)
+        printf 'Usage: aegiscope report [--run RUN_DIRECTORY]\n'
+        return 0
+        ;;
+      *) die "unknown report option: $1" ;;
+    esac
+  done
+  [[ -n "$run_dir" ]] || run_dir="$(latest_run_dir)" || die "no result runs found"
+  manifest="${run_dir}/manifest.json"
+  [[ -f "$manifest" ]] || die "manifest not found: $manifest"
+  report="${run_dir}/report.md"
+  {
+    printf '# IronCrypt Aegiscope report\n\n'
+    if command -v jq >/dev/null 2>&1; then
+      printf -- '- Operation: %s\n' "$(jq -r .operation "$manifest")"
+      printf -- '- Target: `%s`\n' "$(jq -r .target "$manifest")"
+      printf -- '- Status: %s (exit %s)\n' "$(jq -r .status "$manifest")" "$(jq -r .exit_code "$manifest")"
+      printf -- '- Started: %s\n' "$(jq -r .started_at "$manifest")"
+      printf -- '- Completed: %s\n\n' "$(jq -r .completed_at "$manifest")"
+      printf '## Commands\n\n'
+      jq -r '.commands[] | "- `" + . + "`"' "$manifest"
+      printf '\n## Artifacts\n\n'
+      jq -r '.artifacts[] | "- `" + . + "`"' "$manifest"
+    else
+      printf 'Install jq for a summarized report. Raw manifest follows.\n\n```json\n'
+      cat "$manifest"
+      printf '```\n'
+    fi
+  } >"$report"
+  printf 'Report: %s\n' "$report"
+}
+
+update_command() {
+  [[ "${1:-}" == "--check" ]] || die "updates are explicit and check-only here; use: aegiscope update --check"
+  command -v git >/dev/null 2>&1 || die "git is required"
+  [[ -d "${AEGISCOPE_ROOT}/.git" ]] || die "not a Git checkout"
+  local branch local_rev remote_rev
+  branch="$(git -C "$AEGISCOPE_ROOT" branch --show-current)"
+  [[ -n "$branch" ]] || die "detached HEAD; update manually"
+  git -C "$AEGISCOPE_ROOT" fetch origin "$branch" --quiet || die "unable to fetch origin/$branch"
+  local_rev="$(git -C "$AEGISCOPE_ROOT" rev-parse HEAD)"
+  remote_rev="$(git -C "$AEGISCOPE_ROOT" rev-parse "origin/$branch")"
+  if [[ "$local_rev" == "$remote_rev" ]]; then
+    info "Up to date."
+  elif git -C "$AEGISCOPE_ROOT" merge-base --is-ancestor "$local_rev" "$remote_rev"; then
+    info "Update available. Review it, then run: git pull --ff-only origin $branch"
+  elif git -C "$AEGISCOPE_ROOT" merge-base --is-ancestor "$remote_rev" "$local_rev"; then
+    info "Local branch is ahead of origin/$branch; no pull needed."
+  else
+    warn "Local and remote branches have diverged; inspect manually."
+    return 1
+  fi
+}
+
+menu_clear() {
+  [[ -t 1 ]] && command -v clear >/dev/null 2>&1 && clear || true
+}
+
+menu_pause() {
+  ui_prompt 'Press Enter to continue...'
+  read -r _
+}
+
+menu_read() {
+  local prompt="$1" variable="$2"
+  ui_prompt "$prompt"
+  read -r "${variable?}"
+}
+
+menu_recon() {
+  local choice target stage external=0
+  while true; do
+    menu_clear
+    ui_banner
+    ui_section 'Reconnaissance → Categories'
+    ui_option '1' 'Network basics — ping and route context'
+    ui_option '2' 'External intelligence — Shodan and IPinfo'
+    ui_option '3' 'Server fingerprinting — DNS, Whois, HTTP/TLS hints'
+    ui_option '4' 'Webserver metafiles — robots, sitemap, security.txt'
+    ui_option '5' 'Application fingerprinting — httpx or WhatWeb'
+    ui_option '6' 'Entry-point mapping — forms, inputs, actions and links'
+    ui_option '7' 'Execution-path mapping — passive link/action extraction'
+    ui_option '8' 'Architecture mapping — DNS, ASN, CDN and route evidence'
+    ui_option '9' 'Complete OWASP-aligned reconnaissance workflow'
+    ui_option '0' 'Back to main menu'
+    menu_read 'Choose a recon category: ' choice
+    case "$choice" in
+      1) stage=network ;;
+      2)
+        stage=intel
+        external=1
+        ;;
+      3) stage=server ;;
+      4) stage=metafiles ;;
+      5) stage=applications ;;
+      6) stage=entry-points ;;
+      7) stage=paths ;;
+      8) stage=architecture ;;
+      9) stage=all ;;
+      0) return ;;
+      *)
+        warn 'Invalid recon selection'
+        menu_pause
+        continue
+        ;;
+    esac
+    menu_read 'Authorized target URL/domain: ' target
+    if ((external == 1)); then recon_command --target "$target" --stage "$stage" --external-intel --authorized; else recon_command --target "$target" --stage "$stage" --authorized; fi
+    external=0
+    menu_pause
+  done
+}
+
+menu_ports() {
+  local choice target profile scan_type ports skip answer
+  local -a args
+  while true; do
+    menu_clear
+    ui_banner
+    ui_section 'Port Scanning → Profiles'
+    ui_option '1' 'Quick TCP — top 1,000 ports and service detection'
+    ui_option '2' 'Full TCP — all ports and service detection'
+    ui_option '3' 'UDP Top — bounded top 100 UDP services'
+    ui_option '4' 'Firewall Map — ACK filtered/unfiltered analysis'
+    ui_option '5' 'Custom — scan type, ports and service detection'
+    ui_option '0' 'Back to main menu'
+    menu_read 'Choose a scan profile: ' choice
+    case "$choice" in
+      1) profile=quick-tcp ;;
+      2) profile=full-tcp ;;
+      3) profile=udp-top ;;
+      4) profile=firewall-map ;;
+      5) profile=custom ;;
+      0) return ;;
+      *)
+        warn 'Invalid port selection'
+        menu_pause
+        continue
+        ;;
+    esac
+    menu_read 'Authorized target host/IP: ' target
+    args=(--target "$target" --profile "$profile")
+    if [[ "$profile" == custom ]]; then
+      menu_read 'Scan type [connect/syn/null/fin/xmas/ack/udp]: ' scan_type
+      menu_read 'Port expression [top 1000]: ' ports
+      args+=(--scan-type "${scan_type:-connect}")
+      [[ -z "$ports" ]] || args+=(--ports "$ports")
+      menu_read 'Enable service detection? [y/N]: ' answer
+      [[ "$answer" =~ ^[Yy]$ ]] && args+=(--service-detection)
+    fi
+    menu_read 'Skip normal host discovery with -Pn? [y/N]: ' skip
+    [[ "$skip" =~ ^[Yy]$ ]] && args+=(--skip-host-discovery)
+    ports_command "${args[@]}" --authorized
+    menu_pause
+  done
+}
+
+menu_web() {
+  local choice target mode wordlist rate depth format
+  local -a args
+  while true; do
+    menu_clear
+    ui_banner
+    ui_section 'Web Enumeration → Categories'
+    ui_option '1' 'Directory and file discovery — ffuf/Gobuster'
+    ui_option '2' 'Virtual-host discovery — Gobuster VHost mode'
+    ui_option '3' 'DNS name discovery — Gobuster DNS mode'
+    ui_option '4' 'Passive subdomains — Subfinder → httpx enrichment'
+    ui_option '5' 'HTTP analysis — redirects, cookies, headers and methods'
+    ui_option '6' 'Technology/CMS fingerprinting — httpx or WhatWeb'
+    ui_option '7' 'TLS analysis — testssl.sh/OpenSSL/Nmap'
+    ui_option '8' 'Complete web workflow'
+    ui_option '0' 'Back to main menu'
+    menu_read 'Choose a web category: ' choice
+    case "$choice" in
+      1) mode=dir ;;
+      2) mode=vhost ;;
+      3) mode=dns ;;
+      4) mode=subdomains ;;
+      5) mode=http ;;
+      6) mode=tech ;;
+      7) mode=tls ;;
+      8) mode=all ;;
+      0) return ;;
+      *)
+        warn 'Invalid web selection'
+        menu_pause
+        continue
+        ;;
+    esac
+    menu_read 'Authorized target URL/domain: ' target
+    args=(--target "$target" --mode "$mode")
+    if [[ "$mode" == dir || "$mode" == vhost || "$mode" == dns || "$mode" == all ]]; then
+      menu_read 'Wordlist path [bundled default]: ' wordlist
+      [[ -z "$wordlist" ]] || args+=(--wordlist "$wordlist")
+      menu_read "Request rate [${AEGISCOPE_MAX_RATE} max]: " rate
+      [[ -z "$rate" ]] || args+=(--request-rate "$rate")
+    fi
+    if [[ "$mode" == dir || "$mode" == all ]]; then
+      menu_read 'ffuf recursion depth [0]: ' depth
+      menu_read 'Output format [json/html/csv/all, default json]: ' format
+      [[ -z "$depth" ]] || args+=(--recursion-depth "$depth")
+      [[ -z "$format" ]] || args+=(--output-format "$format")
+    fi
+    web_command "${args[@]}" --authorized
+    menu_pause
+  done
+}
+
+menu_application_security() {
+  local choice target parameter method discover
+  local -a args
+  while true; do
+    menu_clear
+    ui_banner
+    ui_section 'Application Security → Safe Checks'
+    ui_option '1' 'Context-aware XSS audit — discovery, encoding and DOM indicators'
+    ui_option '2' 'HTTP security headers and advertised methods'
+    ui_option '3' 'Technology and CMS fingerprinting'
+    ui_option '0' 'Back to main menu'
+    menu_read 'Choose an application check: ' choice
+    case "$choice" in
+      1)
+        menu_read 'Authorized target URL: ' target
+        menu_read 'Parameter name [q; blank when using discovery]: ' parameter
+        menu_read 'Method [get/post, default get]: ' method
+        menu_read 'Discover query and form parameters? [y/N]: ' discover
+        args=(--target "$target" --method "${method:-get}" --authorized)
+        [[ -z "$parameter" ]] || args+=(--parameter "$parameter")
+        [[ "$discover" =~ ^[Yy]$ ]] && args+=(--discover-parameters)
+        xss_command "${args[@]}"
+        ;;
+      2)
+        menu_read 'Authorized target URL: ' target
+        web_command --target "$target" --mode http --authorized
+        ;;
+      3)
+        menu_read 'Authorized target URL: ' target
+        web_command --target "$target" --mode tech --authorized
+        ;;
+      0) return ;;
+      *)
+        warn 'Invalid application-security selection'
+        menu_pause
+        continue
+        ;;
+    esac
+    menu_pause
+  done
+}
+
+menu_resilience() {
+  local choice target duration rate concurrency engine method header body max_error p95
+  local -a args
+  while true; do
+    menu_clear
+    ui_banner
+    ui_section 'DDoS / Load Resilience → Bounded Single-Source Tests'
+    ui_caution
+    ui_option '1' 'Smoke load — 5 seconds, 5 requests/sec, concurrency 1'
+    ui_option '2' 'Standard load — 10 seconds, 10 requests/sec, concurrency 2'
+    ui_option '3' 'Custom bounded load — hard duration/rate/request caps'
+    ui_option '0' 'Back to main menu'
+    menu_read 'Choose a resilience profile: ' choice
+    [[ "$choice" != 0 ]] || return
+    menu_read 'Authorized target URL: ' target
+    case "$choice" in
+      1) load_command --target "$target" --duration 5 --request-rate 5 --concurrency 1 --authorized ;;
+      2) load_command --target "$target" --duration 10 --request-rate 10 --concurrency 2 --authorized ;;
+      3)
+        menu_read "Duration seconds [10, max ${AEGISCOPE_MAX_LOAD_DURATION}]: " duration
+        menu_read "Requests/sec [10, max ${AEGISCOPE_MAX_RATE}]: " rate
+        menu_read "Concurrency [2, max ${AEGISCOPE_MAX_LOAD_CONCURRENCY}]: " concurrency
+        menu_read 'Engine [auto/k6/hey/curl]: ' engine
+        menu_read 'HTTP method [GET]: ' method
+        menu_read 'Authentication/custom header [optional Name: value]: ' header
+        menu_read 'Request body [optional; redacted from manifest]: ' body
+        menu_read 'Maximum error percentage [5]: ' max_error
+        menu_read 'Maximum p95 latency in ms [1000]: ' p95
+        args=(--target "$target" --duration "${duration:-10}" --request-rate "${rate:-10}" --concurrency "${concurrency:-2}" --engine "${engine:-auto}" --method "${method:-GET}" --max-error-rate "${max_error:-5}" --p95-ms "${p95:-1000}" --authorized)
+        [[ -z "$header" ]] || args+=(--header "$header")
+        [[ -z "$body" ]] || args+=(--body "$body")
+        load_command "${args[@]}"
+        ;;
+      *)
+        warn 'Invalid resilience selection'
+        menu_pause
+        continue
+        ;;
+    esac
+    menu_pause
+  done
+}
+
+menu_results() {
+  local choice run_dir
+  while true; do
+    menu_clear
+    ui_banner
+    ui_section 'Results & Reporting'
+    ui_option '1' 'Generate Markdown report for latest run'
+    ui_option '2' 'Compare the two most recent run manifests'
+    ui_option '3' 'List stored result runs'
+    ui_option '4' 'Generate report for a selected run directory'
+    ui_option '0' 'Back to main menu'
+    menu_read 'Choose a result action: ' choice
+    case "$choice" in
+      1) report_command ;;
+      2) compare_command ;;
+      3) find "$AEGISCOPE_RESULTS_ROOT" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sort || true ;;
+      4)
+        menu_read 'Run directory: ' run_dir
+        report_command --run "$run_dir"
+        ;;
+      0) return ;;
+      *)
+        warn 'Invalid result selection'
+        menu_pause
+        continue
+        ;;
+    esac
+    menu_pause
+  done
+}
+
+menu_maintenance() {
+  local choice
+  while true; do
+    menu_clear
+    ui_banner
+    ui_section 'Environment & Maintenance'
+    ui_option '1' 'Dependency and configuration doctor'
+    ui_option '2' 'Check Git update status (never modifies files)'
+    ui_option '3' 'Display authorized scope file'
+    ui_option '4' 'Show command-line help'
+    ui_option '0' 'Back to main menu'
+    menu_read 'Choose a maintenance action: ' choice
+    case "$choice" in
+      1) doctor_command || true ;;
+      2) update_command --check ;;
+      3)
+        printf '%s\n' "$AEGISCOPE_SCOPE_FILE"
+        sed -n '1,200p' "$AEGISCOPE_SCOPE_FILE"
+        ;;
+      4) usage ;;
+      0) return ;;
+      *)
+        warn 'Invalid maintenance selection'
+        menu_pause
+        continue
+        ;;
+    esac
+    menu_pause
+  done
+}
+
+interactive_menu() {
+  local choice
+  while true; do
+    menu_clear
+    ui_banner
+    ui_caution
+    ui_section 'Main Menu'
+    ui_option '1' 'Reconnaissance — network, intelligence and OWASP stages'
+    ui_option '2' 'Port scanning — quick, full, UDP, firewall and custom'
+    ui_option '3' 'Web enumeration — content, VHost, DNS, subdomains, HTTP, TLS'
+    ui_option '4' 'Application security — XSS reflection and HTTP checks'
+    ui_option '5' 'DDoS / load resilience — bounded single-source testing'
+    ui_option '6' 'Results and reporting — reports, comparisons and run history'
+    ui_option '7' 'Environment and maintenance — doctor, scope and updates'
+    ui_option '0' 'Exit'
+    menu_read 'Choose a category: ' choice
+    case "$choice" in
+      1) menu_recon ;;
+      2) menu_ports ;;
+      3) menu_web ;;
+      4) menu_application_security ;;
+      5) menu_resilience ;;
+      6) menu_results ;;
+      7) menu_maintenance ;;
+      0)
+        printf '%sGoodbye from IronCrypt Aegiscope.%s\n' "$C_CYAN" "$C_RESET"
+        return
+        ;;
+      *)
+        warn 'Invalid main-menu selection'
+        menu_pause
+        ;;
+    esac
+  done
+}
+
+main() {
+  local command="${1:-}"
+  if [[ -z "$command" ]]; then
+    interactive_menu
+    return
+  fi
+  shift
+  case "$command" in
+    ports) ports_command "$@" ;;
+    web) web_command "$@" ;;
+    recon) recon_command "$@" ;;
+    xss) xss_command "$@" ;;
+    load) load_command "$@" ;;
+    doctor) doctor_command "$@" ;;
+    report) report_command "$@" ;;
+    compare) compare_command "$@" ;;
+    update) update_command "$@" ;;
+    help | -h | --help) usage ;;
+    version | --version) printf '%s %s\n' "$AEGISCOPE_NAME" "$AEGISCOPE_VERSION" ;;
+    ddos) load_command "$@" ;;
+    *)
+      usage >&2
+      die "unknown command: $command"
+      ;;
+  esac
+}
+
+main "$@"

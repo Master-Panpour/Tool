@@ -1,91 +1,130 @@
----
+# IronCrypt Aegiscope usage
 
-## docs/USAGE.md
+## Command model
 
-```markdown
-# USAGE — IronCrypt
+```text
+aegiscope recon  --target URL|DOMAIN [options]
+aegiscope ports  --target HOST [options]
+aegiscope web    --target URL|DOMAIN [options]
+aegiscope xss    --target URL --parameter NAME [options]
+aegiscope load   --target URL [options]
+aegiscope ddos   --target URL [options] # bounded load-resilience alias
+aegiscope doctor
+aegiscope report [--run DIRECTORY]
+aegiscope compare [--baseline DIRECTORY] [--current DIRECTORY]
+aegiscope update --check
+```
 
-This document walks through how to use IronCrypt: how to run it, which options are available, examples.
+Run the repository-local command as `./aegiscope`. Running it without arguments opens the full nested interactive menu; automation should use explicit subcommands.
 
----
+## Safety controls
 
-## 🎮 Running IronCrypt
+All commands that contact a target:
 
-From project root:
+1. Validate the target syntax.
+2. Normalize a URL to its hostname.
+3. Require a match in `config/authorized_scope.txt` (or `--scope-file FILE`).
+4. Require an authorization assertion: selection under the interactive menu's caution, or `--authorized` for direct commands and automation.
+5. Reject request rates above `AEGISCOPE_MAX_RATE` (default 100).
+
+`--authorized` is an assertion, not a bypass: scope membership is still mandatory.
+The interactive menu displays the legal-use caution up front and treats the operator's subsequent scan selection as that assertion; it still enforces the scope file and rate ceilings.
+
+## Ports
 
 ```bash
-cd IronCrypt
-./bin/ironcrypt.sh
+./aegiscope ports --target HOST --profile quick-tcp --authorized
+```
 
----
+Options include `--request-rate`, `--skip-host-discovery`, and custom scan controls. Normal Nmap host discovery is the default. See [SCAN_TYPES.md](SCAN_TYPES.md).
 
-You will see a menu:
+## Web
 
- -Port Scanning Options
- -Web Enumeration Options
- -DDOS (coming soon)
- -XSS Automation (coming soon)
- -Exit
+Modes:
 
-Select one by entering the number.
+- `dir`: ffuf with `-ac`, `-rate`, `-maxtime`, optional recursion, repeatable `--header`, and `json|html|csv|all` output. Gobuster is the fallback.
+- `vhost`: Gobuster VHost mode with `--append-domain`, one worker, and a calculated delay.
+- `dns`: Gobuster DNS mode with the same single-worker request-rate delay.
+- `subdomains`: Subfinder JSONL/source attribution; jq extracts hosts and httpx adds status, title, technologies, server, IP, and CNAME.
+- `http`: follows redirects, records headers/body, lists server hints and cookies, checks common security headers, and prints the OPTIONS `Allow` value as advertised methods.
+- `tech`: httpx or WhatWeb technology/CMS fingerprinting.
+- `tls`: testssl.sh JSON/HTML output with OpenSSL or Nmap fallbacks.
+- `all`: runs every web stage and records partial failures in the manifest exit code.
 
----
+Example with authentication and controlled fuzzing:
 
-## 🌐 Port Scanning Options
+```bash
+./aegiscope web \
+  --target https://app.lab.example.com \
+  --mode dir \
+  --header 'Authorization: Bearer TOKEN' \
+  --request-rate 20 \
+  --max-time 180 \
+  --recursion-depth 1 \
+  --output-format all \
+  --authorized
+```
 
-When you pick Port Scanning Options, you’ll be taken to a submenu:
+Authentication values are redacted in the manifest.
 
- -You can pick one or more scan types from:
+## Recon
 
-    > TCP-Connect (-sT)
-    > SYN (-sS)
-    > NULL (-sN)
-    > FIN (-sF)
-    > Xmas (-sX)
-    > ACK (-sA)
-    > UDP (-sU)
+The stages correspond to OWASP WSTG information gathering:
 
- -Rules / compatibility:
+| Stage | Collected evidence |
+|---|---|
+| `network` | Ping and route context |
+| `intel` | Optional Shodan and IPinfo evidence |
+| `server` | DNS, Whois, redirects, headers, cookies, HTTP/TLS hints |
+| `metafiles` | `robots.txt`, `sitemap.xml`, `.well-known/security.txt` |
+| `applications` | httpx or WhatWeb fingerprinting |
+| `entry-points` | Passive form, input, button, link, action, and name attributes |
+| `paths` | Passive links/actions extracted from the fetched page |
+| `architecture` | DNS topology, optional route data, CDN/ASN/CNAME metadata |
+| `all` | Every stage in numbered artifact directories |
 
-    > Only one TCP scan type can be selected per run (e.g. you can choose -sS or -sT but not both together).
+The `all` stage performs external intelligence only when `--external-intel` is supplied. Selecting the dedicated `intel` stage is itself an explicit request for those lookups.
 
-    > You can combine a TCP scan type with -sU (UDP) in the same run.
+## XSS reflection audit
 
-After selecting scan types, you will be asked for:
+`aegiscope xss` is a complete non-executing discovery workflow. It sends a unique canary plus harmless punctuation through named GET or POST parameters, distinguishes raw from encoded reflection, captures response contexts, records content type and CSP, identifies common DOM sources/sinks, and writes text plus JSONL evidence. `--discover-parameters` extracts candidates from the target query string and HTML form fields. Response bodies are capped with `--max-response-bytes`.
 
- -target IP or hostname (default: 127.0.0.1)
+It deliberately does not inject script elements, event handlers, or executable browser payloads. Findings are investigation leads for manual validation within the assessment scope.
 
- -confirmation (permission prompt)
+## DDoS/load resilience
 
-Then IronCrypt runs nmap with the appropriate flags, scanning all ports (-p-) and doing service version detection (-sV). The output files are saved with a timestamp and target in their names (prefix like ironcrypt_ports_<target>_<timestamp>).
+The `load` command—and its `ddos` alias—implements a bounded, single-source resilience assessment. It supports k6, hey, and curl engines, common HTTP methods, repeatable authentication/custom headers, redacted request bodies, maximum error-rate thresholds, p95 latency thresholds, and structured test plans/results.
 
----
+```bash
+./aegiscope ddos \
+  --target https://app.lab.example.com/api \
+  --duration 10 --request-rate 10 --concurrency 2 \
+  --method POST --header 'Authorization: Bearer TOKEN' \
+  --body '{"healthCheck":true}' \
+  --max-error-rate 5 --p95-ms 1000 --authorized
+```
 
-## 🌐 Web Enumeration Options
+Hard limits remain:
 
-When you pick Web Enumeration Options, you’ll get a submenu of categories:
+- Maximum duration: 60 seconds.
+- Maximum configured rate: 100 requests/second.
+- Maximum concurrency: 20.
+- Maximum duration × rate budget: 1,000 requests.
 
-| Category                        | What it does                                                                                                           |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Directory/File enumeration      | Uses wordlists (e.g. `rockyou.txt` or `small.txt`) with `ffuf` or `gobuster` to find hidden paths/files on the server. |
-| HTTP headers / methods analysis | Fetches HTTP headers, runs `OPTIONS` request to see allowed methods.                                                   |
-| SSL/TLS info                    | Uses `openssl` (or fallback) to fetch the server certificate, cipher suites etc.                                       |
+These limits can be lowered with environment settings but should not be raised without corresponding organizational controls. Threshold failures return a nonzero status suitable for CI. Distributed traffic coordination, availability-destruction logic, and limit bypasses are not implemented.
 
-After choosing category, you will be prompted for:
+## Doctor and reports
 
- -base URL (default http://127.0.0.1:8080)
- -if applicable: path to wordlist
+`aegiscope doctor` identifies installed and missing core, recommended, optional, and development tools.
 
-Outputs:
+`aegiscope report` converts the latest manifest into Markdown. Pass `--run results/<directory>` for a specific run. jq produces the summarized form; without jq the raw manifest is embedded.
 
- -Directory enumeration → output file (json or txt) with prefix ironcrypt_ffuf_dir_... or ironcrypt_gobuster_dir_...
- -For headers / methods → printed to console
- -For SSL/TLS → certificate details printed
+`aegiscope compare` compares two run manifests, defaulting to the two newest runs, and writes a Markdown diff into the current run directory.
 
- ---
+## Interactive menu and colors
 
-## ⚠️Troubleshooting
+Run `./aegiscope` without a subcommand for the full nested menu. Colors identify banners, section headings, selectable numbers, prompts, success output, warnings, and errors. Color is automatically disabled for redirected output and can be explicitly disabled with `NO_COLOR=1`.
 
-- If ffuf or gobuster is not found → make sure installed and in $PATH.
-- If nmap flags cause “permission denied” or require root → run with sudo for some scan types.
-- For SSL/TLS info, ensure the target supports HTTPS; if port isn’t 443 you may need to specify correct port.
+## Updates
+
+`aegiscope update --check` fetches the tracked branch and reports whether it is current, behind, ahead, or diverged. It never modifies the working tree. Review changes and use `git pull --ff-only` manually.

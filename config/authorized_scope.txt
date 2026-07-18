@@ -1,0 +1,9 @@
+# IronCrypt Aegiscope authorized scope
+# One exact host, wildcard domain, or IPv4 CIDR per line.
+# Examples:
+# *.lab.example.com
+# 192.0.2.0/24
+
+localhost
+127.0.0.1
+::1

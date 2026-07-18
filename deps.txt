@@ -1,7 +1,28 @@
-# Dependencies for IronCrypt
+# IronCrypt Aegiscope dependencies
+# Core
+bash
+curl
+
+# Recommended
 nmap
+openssl
+jq
+dnsutils
+whois
+traceroute
+
+# Optional integrations
+ffuf
 gobuster
-# Optional: ffuf (install via Go if not in package repo)
-# Optional: masscan (only if practicing in lab, very careful)
-# Optional: ffuf via Go
-# Wordlists: rockyou.txt (if you have it locally), else instructions to download
+subfinder
+httpx
+testssl.sh
+whatweb
+shodan
+k6
+hey
+
+# Development
+shellcheck
+shfmt
+bats

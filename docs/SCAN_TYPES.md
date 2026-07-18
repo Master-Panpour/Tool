@@ -1,37 +1,17 @@
-# Port Scan Types & Compatibility
+# Aegiscope port-scan profiles
 
-These are some common Nmap scan types:
+| Profile | Nmap behavior | Purpose |
+|---|---|---|
+| `quick-tcp` | `-sT --top-ports 1000 -sV` | Privilege-friendly service inventory |
+| `full-tcp` | `-sT -p- -sV` | Exhaustive TCP inventory; potentially long-running |
+| `udp-top` | `-sU --top-ports 100 -sV` | Bounded UDP service discovery |
+| `firewall-map` | `-sA --top-ports 1000` | Filtered/unfiltered firewall-path mapping, not open-port discovery |
+| `custom` | Validated scan type and port expression | Explicit advanced assessment |
 
-| Scan Type       | Nmap Flag     | Description                                                  |
-|------------------|----------------|--------------------------------------------------------------|
-| TCP Connect      | `-sT`          | Uses OS connect(); requires no raw packet privileges         |
-| SYN              | `-sS`          | Stealth / half-open scan; needs root/raw privileges          |
-| NULL             | `-sN`          | No flags; uses TCP null scan                                 |
-| FIN              | `-sF`          | FIN-flag scan                                               |
-| Xmas             | `-sX`          | FIN, PSH, URG flags; “Christmas tree” packets                |
-| ACK              | `-sA`          | Used to map firewall rules etc.                             |
-| UDP              | `-sU`          | UDP scan                                                    |
+Every profile also receives `--max-rate <request-rate>` and `-oA <run-directory>/nmap`.
 
----
+Normal Nmap host discovery is enabled by default. `--skip-host-discovery` adds `-Pn`, causing Nmap to treat the target as online. This can make scans slower and should only be used when discovery probes are known to be blocked.
 
-## Which combinations are allowed / disallowed
+Custom scan types are `connect`, `syn`, `null`, `fin`, `xmas`, `ack`, and `udp`. `--service-detection` explicitly adds `-sV`. A custom port expression is limited to numeric Nmap port syntax rather than accepting arbitrary Nmap arguments.
 
-- You generally can use **only one TCP scan type** at a time among `-sT`, `-sS`, `-sN`, `-sF`, `-sX`, `-sA`. Using more than one TCP scan type together is **invalid**.  
-- You *can* combine one TCP scan type with UDP scan (`-sU`). E.g. `nmap -sS -sU target` is valid. :contentReference[oaicite:1]{index=1}  
-- Always check privilege: some scan types need root or special privileges (raw sockets).  
-- Also some scan types (NULL, FIN, Xmas) may behave differently depending on OS / firewall settings.  
-
----
-
-## Web Enumeration Categories
-
-In web enumeration we can categorize like:
-
-- Directory / File enumeration (wordlist / brute force)  
-- Virtual Hosts enumeration  
-- Subdomain enumeration  
-- HTTP methods / headers analysis  
-- SSL / TLS info etc.
-
----
-
+Some raw-packet scans require elevated privileges. Aegiscope does not invoke `sudo` automatically.

@@ -1,0 +1,4 @@
+results/
+.tmp-tools/
+*.swp
+.DS_Store

@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
-# xss_stub.sh
-echo "XSS automation: coming soon."
-echo "This menu entry is a placeholder. Future work may include safe, authorized scanning techniques (no exploitation)."
+BASEDIR="$(cd "$(dirname "$0")" && pwd)"
+printf 'Legacy entry point: running the non-executing XSS reflection audit.\n' >&2
+exec "${BASEDIR}/aegiscope" xss "$@"

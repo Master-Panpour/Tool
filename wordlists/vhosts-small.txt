@@ -1,0 +1,13 @@
+admin
+api
+app
+dev
+docs
+internal
+mail
+portal
+staging
+status
+test
+vpn
+www
