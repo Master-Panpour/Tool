@@ -153,4 +153,8 @@ bats tests
 
 Linux CI runs these syntax, formatting, static-analysis, Python, executable-bit, and fully mocked Bats checks. See [complete usage](docs/USAGE.md), [architecture](docs/ARCHITECTURE.md), [profile semantics](docs/SCAN_TYPES.md), the [implementation matrix](docs/FEATURE_MATRIX.md), and the [changelog](CHANGELOG.md).
 
+## Security
+
+Report suspected vulnerabilities privately and review supported versions, response targets, and safe-research requirements in the [security policy](SECURITY.md). Do not disclose vulnerability details or assessment evidence in a public issue.
+
 The project remains GPLv3 licensed.
