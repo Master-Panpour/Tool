@@ -32,10 +32,104 @@ EOF
   chmod +x "${MOCK_BIN}/nmap"
 }
 
+mock_nmap_ansi_version() {
+  cat >"${MOCK_BIN}/nmap" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then printf '\033[31mNmap mock 1.0\033[0m\n'; exit 0; fi
+while (($#)); do
+  if [[ "$1" == "-oA" ]]; then touch "${2}.nmap" "${2}.gnmap" "${2}.xml"; break; fi
+  shift
+done
+EOF
+  chmod +x "${MOCK_BIN}/nmap"
+}
+
+mock_nmap_hang() {
+  cat >"${MOCK_BIN}/nmap" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then echo 'Nmap mock 1.0'; exit 0; fi
+sleep 30
+EOF
+  chmod +x "${MOCK_BIN}/nmap"
+}
+
+mock_subfinder_empty() {
+  cat >"${MOCK_BIN}/subfinder" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-version" ]]; then echo 'subfinder mock 1.0'; exit 0; fi
+printf 'subfinder:%s\n' "$*" >>"$MOCK_LOG"
+while (($#)); do
+  if [[ "$1" == "-o" ]]; then : >"$2"; break; fi
+  shift
+done
+EOF
+  chmod +x "${MOCK_BIN}/subfinder"
+}
+
+mock_nuclei_empty() {
+  cat >"${MOCK_BIN}/nuclei" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-version" ]]; then echo 'nuclei mock 1.0'; exit 0; fi
+printf 'nuclei:%s\n' "$*" >>"$MOCK_LOG"
+while (($#)); do
+  if [[ "$1" == "-o" ]]; then : >"$2"; break; fi
+  shift
+done
+EOF
+  chmod +x "${MOCK_BIN}/nuclei"
+}
+
+mock_whois_hang() {
+  cat >"${MOCK_BIN}/whois" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then echo 'whois mock 1.0'; exit 0; fi
+sleep 30
+EOF
+  chmod +x "${MOCK_BIN}/whois"
+}
+
+mock_naabu_hang() {
+  cat >"${MOCK_BIN}/naabu" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "-version" ]]; then echo 'naabu mock 1.0'; exit 0; fi
+sleep 30
+EOF
+  chmod +x "${MOCK_BIN}/naabu"
+}
+
+mock_nuclei_hang() {
+  cat >"${MOCK_BIN}/nuclei" <<'EOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+  -version) echo 'nuclei mock 1.0'; exit 0 ;;
+  -templates-version) echo 'templates mock 1.0'; exit 0 ;;
+esac
+sleep 30
+EOF
+  chmod +x "${MOCK_BIN}/nuclei"
+}
+
+mock_hanging_plugin() {
+  export AEGISCOPE_PLUGIN_ROOT="${TEST_WORK}/plugins"
+  mkdir -p "$AEGISCOPE_PLUGIN_ROOT"
+  cat >"${AEGISCOPE_PLUGIN_ROOT}/hang.sh" <<'EOF'
+#!/usr/bin/env bash
+AEGIS_PLUGIN_NAME="hang"
+AEGIS_PLUGIN_DESCRIPTION="timeout regression fixture"
+declare -a AEGIS_PLUGIN_COMMAND=()
+aegis_plugin_check() { return 0; }
+aegis_plugin_build_command() { AEGIS_PLUGIN_COMMAND=(sleep 30); }
+aegis_plugin_execute() { "${AEGIS_PLUGIN_COMMAND[@]}"; }
+aegis_plugin_normalize() { return 0; }
+aegis_plugin_artifacts() { return 0; }
+EOF
+  chmod +x "${AEGISCOPE_PLUGIN_ROOT}/hang.sh"
+}
+
 mock_ffuf() {
   cat >"${MOCK_BIN}/ffuf" <<'EOF'
 #!/usr/bin/env bash
-if [[ "${1:-}" == "--version" ]]; then echo 'ffuf mock 1.0'; exit 0; fi
+if [[ "${1:-}" == "-V" ]]; then echo 'ffuf mock 1.0'; exit 0; fi
 printf '%s\n' "$@" >>"$MOCK_LOG"
 while (($#)); do
   if [[ "$1" == "-o" ]]; then touch "$2"; break; fi
@@ -48,7 +142,7 @@ EOF
 mock_gobuster() {
   cat >"${MOCK_BIN}/gobuster" <<'EOF'
 #!/usr/bin/env bash
-if [[ "${1:-}" == "--version" ]]; then echo 'gobuster mock 1.0'; exit 0; fi
+if [[ "${1:-}" == "version" ]]; then echo 'gobuster mock 1.0'; exit 0; fi
 printf '%s\n' "$@" >>"$MOCK_LOG"
 while (($#)); do
   if [[ "$1" == "-o" ]]; then touch "$2"; break; fi
@@ -61,7 +155,7 @@ EOF
 mock_subfinder_pipeline() {
   cat >"${MOCK_BIN}/subfinder" <<'EOF'
 #!/usr/bin/env bash
-if [[ "${1:-}" == "--version" ]]; then echo 'subfinder mock 1.0'; exit 0; fi
+if [[ "${1:-}" == "-version" ]]; then echo 'subfinder mock 1.0'; exit 0; fi
 printf 'subfinder:%s\n' "$*" >>"$MOCK_LOG"
 while (($#)); do
   if [[ "$1" == "-o" ]]; then
@@ -79,7 +173,7 @@ printf 'app.lab.example.com\noutside.example.net\n'
 EOF
   cat >"${MOCK_BIN}/httpx" <<'EOF'
 #!/usr/bin/env bash
-if [[ "${1:-}" == "--version" ]]; then echo 'httpx mock 1.0'; exit 0; fi
+if [[ "${1:-}" == "-version" ]]; then echo 'httpx mock 1.0'; exit 0; fi
 printf 'httpx:%s\n' "$*" >>"$MOCK_LOG"
 output=''
 while (($#)); do
@@ -131,9 +225,15 @@ EOF
 mock_httpx_capture() {
   cat >"${MOCK_BIN}/httpx" <<'EOF'
 #!/usr/bin/env bash
-if [[ "${1:-}" == "--version" ]]; then echo 'httpx mock 1.0'; exit 0; fi
+if [[ "${1:-}" == "-version" ]]; then echo 'httpx mock 1.0'; exit 0; fi
 printf 'httpx:%s\n' "$*" >>"$MOCK_LOG"
-printf '{"url":"https://localhost","status_code":200,"title":"Lab","tech":["nginx"]}\n'
+output=''
+while (($#)); do
+  if [[ "$1" == "-o" ]]; then output="$2"; break; fi
+  shift
+done
+payload='{"url":"https://localhost","status_code":200,"title":"Lab","tech":["nginx"]}'
+if [[ -n "$output" ]]; then printf '%s\n' "$payload" >"$output"; else printf '%s\n' "$payload"; fi
 EOF
   chmod +x "${MOCK_BIN}/httpx"
 }
@@ -141,7 +241,7 @@ EOF
 mock_httpx_failure() {
   cat >"${MOCK_BIN}/httpx" <<'EOF'
 #!/usr/bin/env bash
-if [[ "${1:-}" == "--version" ]]; then echo 'httpx mock 1.0'; exit 0; fi
+if [[ "${1:-}" == "-version" ]]; then echo 'httpx mock 1.0'; exit 0; fi
 printf 'httpx:%s\n' "$*" >>"$MOCK_LOG"
 exit 4
 EOF
@@ -167,7 +267,7 @@ EOF
 mock_hey() {
   cat >"${MOCK_BIN}/hey" <<'EOF'
 #!/usr/bin/env bash
-if [[ "${1:-}" == "--version" ]]; then echo 'hey mock 1.0'; exit 0; fi
+if [[ "${1:-}" == "-version" ]]; then echo 'hey mock 1.0'; exit 0; fi
 printf 'hey:%s\n' "$*" >>"$MOCK_LOG"
 printf 'response-time,DNS+dialup,DNS,Request-write,Response-delay,Response-read,status-code,offset\n'
 printf '0.010,0.001,0.001,0.001,0.005,0.002,200,0.010\n'
@@ -179,7 +279,7 @@ mock_advanced_pipeline() {
   mock_nmap
   cat >"${MOCK_BIN}/subfinder" <<'EOF'
 #!/usr/bin/env bash
-if [[ "${1:-}" == "--version" ]]; then echo 'subfinder mock 1.0'; exit 0; fi
+if [[ "${1:-}" == "-version" ]]; then echo 'subfinder mock 1.0'; exit 0; fi
 printf 'subfinder:%s\n' "$*" >>"$MOCK_LOG"
 while (($#)); do
   if [[ "$1" == "-o" ]]; then printf '{"host":"app.lab.example.com","source":"crtsh"}\n' >"$2"; break; fi
@@ -188,7 +288,7 @@ done
 EOF
   cat >"${MOCK_BIN}/dnsx" <<'EOF'
 #!/usr/bin/env bash
-if [[ "${1:-}" == "--version" ]]; then echo 'dnsx mock 1.0'; exit 0; fi
+if [[ "${1:-}" == "-version" ]]; then echo 'dnsx mock 1.0'; exit 0; fi
 printf 'dnsx:%s\n' "$*" >>"$MOCK_LOG"
 while (($#)); do
   if [[ "$1" == "-o" ]]; then printf '{"host":"app.lab.example.com","a":["127.0.0.1"]}\n' >"$2"; break; fi
@@ -197,7 +297,7 @@ done
 EOF
   cat >"${MOCK_BIN}/naabu" <<'EOF'
 #!/usr/bin/env bash
-if [[ "${1:-}" == "--version" ]]; then echo 'naabu mock 1.0'; exit 0; fi
+if [[ "${1:-}" == "-version" ]]; then echo 'naabu mock 1.0'; exit 0; fi
 printf 'naabu:%s\n' "$*" >>"$MOCK_LOG"
 while (($#)); do
   if [[ "$1" == "-o" ]]; then printf '{"host":"app.lab.example.com","ip":"127.0.0.1","port":443}\n' >"$2"; break; fi
@@ -206,7 +306,7 @@ done
 EOF
   cat >"${MOCK_BIN}/httpx" <<'EOF'
 #!/usr/bin/env bash
-if [[ "${1:-}" == "--version" ]]; then echo 'httpx mock 1.0'; exit 0; fi
+if [[ "${1:-}" == "-version" ]]; then echo 'httpx mock 1.0'; exit 0; fi
 printf 'httpx:%s\n' "$*" >>"$MOCK_LOG"
 while (($#)); do
   if [[ "$1" == "-o" ]]; then printf '{"url":"https://app.lab.example.com","host":"app.lab.example.com","status_code":200,"tech":["nginx"]}\n' >"$2"; break; fi
@@ -215,7 +315,7 @@ done
 EOF
   cat >"${MOCK_BIN}/katana" <<'EOF'
 #!/usr/bin/env bash
-if [[ "${1:-}" == "--version" ]]; then echo 'katana mock 1.0'; exit 0; fi
+if [[ "${1:-}" == "-version" ]]; then echo 'katana mock 1.0'; exit 0; fi
 printf 'katana:%s\n' "$*" >>"$MOCK_LOG"
 while (($#)); do
   if [[ "$1" == "-o" ]]; then printf '{"url":"https://app.lab.example.com/admin"}\n' >"$2"; break; fi
@@ -238,7 +338,7 @@ EOF
 mock_katana_fail_once() {
   cat >"${MOCK_BIN}/katana" <<'EOF'
 #!/usr/bin/env bash
-if [[ "${1:-}" == "--version" ]]; then echo 'katana mock 1.0'; exit 0; fi
+if [[ "${1:-}" == "-version" ]]; then echo 'katana mock 1.0'; exit 0; fi
 printf 'katana:%s\n' "$*" >>"$MOCK_LOG"
 if [[ ! -f "${TEST_WORK}/katana-failed-once" ]]; then
   touch "${TEST_WORK}/katana-failed-once"
@@ -255,7 +355,7 @@ EOF
 mock_nuclei() {
   cat >"${MOCK_BIN}/nuclei" <<'EOF'
 #!/usr/bin/env bash
-if [[ "${1:-}" == "--version" ]]; then echo 'nuclei mock 1.0'; exit 0; fi
+if [[ "${1:-}" == "-version" ]]; then echo 'nuclei mock 1.0'; exit 0; fi
 printf 'nuclei:%s\n' "$*" >>"$MOCK_LOG"
 while (($#)); do
   if [[ "$1" == "-o" ]]; then printf '{"template-id":"exposure-test","matched-at":"https://localhost/debug","info":{"name":"Exposure","severity":"high"}}\n' >"$2"; break; fi

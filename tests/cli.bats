@@ -581,3 +581,168 @@ PY
   [[ "$output" == *"AUTHORIZED RECONNAISSANCE SENTINEL"* ]]
   [[ "$output" == *"[  IC  ]"* ]]
 }
+
+@test "ANSI tool versions are stripped and manifests remain valid JSON" {
+  mock_nmap_ansi_version
+  run "$PROJECT_ROOT/bin/aegiscope" ports --target localhost --profile quick-tcp --authorized
+  [ "$status" -eq 0 ]
+  manifest="$(find "$AEGISCOPE_RESULTS_ROOT" -name manifest.json -print -quit)"
+  python - "$manifest" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert data["tool_versions"]["nmap"] == "Nmap mock 1.0", repr(data["tool_versions"]["nmap"])
+for tool in ("sublist3r", "assetfinder", "testssl", "ping", "traceroute", "tracepath", "jq", "sqlite3"):
+    assert tool in data["tool_versions"], tool
+manifest_text = open(sys.argv[1], encoding="utf-8").read()
+assert "\x1b" not in manifest_text, repr(manifest_text)
+PY
+}
+
+@test "external commands are terminated at the configured deadline" {
+  mock_nmap_hang
+  run env AEGISCOPE_COMMAND_TIMEOUT=1 "$PROJECT_ROOT/bin/aegiscope" ports --target localhost --profile quick-tcp --authorized
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"deadline: 1s"* ]]
+  [[ "$output" == *"exceeded its 1s deadline"* ]]
+  manifest="$(find "$AEGISCOPE_RESULTS_ROOT" -name manifest.json -print -quit)"
+  grep -q '"exit_code":124' "$manifest"
+}
+
+@test "reviewed plugin execution uses the same central deadline" {
+  mock_hanging_plugin
+  run env AEGISCOPE_COMMAND_TIMEOUT=1 "$PROJECT_ROOT/bin/aegiscope" plugins run --name hang --target https://localhost --authorized
+  [ "$status" -eq 124 ]
+  [[ "$output" == *"plugin-hang exceeded its 1s deadline"* ]]
+  manifest="$(find "$AEGISCOPE_RESULTS_ROOT" -name manifest.json -print -quit)"
+  grep -q '"exit_code":124' "$manifest"
+}
+
+@test "Whois reconnaissance uses its dedicated deadline" {
+  mock_curl
+  mock_whois_hang
+  run env AEGISCOPE_WHOIS_TIMEOUT=1 "$PROJECT_ROOT/bin/aegiscope" recon --target localhost --stage server --authorized
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"whois exceeded its 1s deadline"* ]]
+  manifest="$(find "$AEGISCOPE_RESULTS_ROOT" -name manifest.json -print -quit)"
+  grep -q 'whois localhost' "$manifest"
+  grep -q '"exit_code":124' "$manifest"
+}
+
+@test "Naabu pipeline execution uses its dedicated deadline" {
+  mock_advanced_pipeline
+  mock_naabu_hang
+  run env AEGISCOPE_NAABU_TIMEOUT=1 "$PROJECT_ROOT/bin/aegiscope" pipeline --target lab.example.com --phase active --request-rate 10 --authorized
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"naabu exceeded its 1s deadline"* ]]
+  manifest="$(find "$AEGISCOPE_RESULTS_ROOT" -name manifest.json -print -quit)"
+  grep -q '"exit_code":124' "$manifest"
+}
+
+@test "Nuclei validation uses its dedicated deadline" {
+  mock_nuclei_hang
+  run env AEGISCOPE_NUCLEI_TIMEOUT=1 "$PROJECT_ROOT/bin/aegiscope" validate --target https://localhost --authorized
+  [ "$status" -eq 124 ]
+  [[ "$output" == *"nuclei exceeded its 1s deadline"* ]]
+  [[ "$output" == *"Nuclei validation failed with exit code 124"* ]]
+  manifest="$(find "$AEGISCOPE_RESULTS_ROOT" -name manifest.json -print -quit)"
+  grep -q '"exit_code":124' "$manifest"
+}
+
+@test "malformed runtime ceilings fail with a controlled diagnostic" {
+  run env AEGISCOPE_MAX_RATE='1+' "$PROJECT_ROOT/bin/aegiscope" doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"AEGISCOPE_MAX_RATE must be a positive integer"* ]]
+  [[ "$output" != *"syntax error"* ]]
+  [[ "$output" != *"unbound variable"* ]]
+}
+
+@test "all command families reject trailing unknown options" {
+  for command in ports web recon xss load ddos compare doctor report pipeline validate api; do
+    run "$PROJECT_ROOT/bin/aegiscope" "$command" --bogus
+    [ "$status" -eq 1 ] || {
+      printf '%s returned %s: %s\n' "$command" "$status" "$output"
+      false
+    }
+    [[ "$output" == *"unknown"*"option"* ]]
+  done
+  for command in help version; do
+    run "$PROJECT_ROOT/bin/aegiscope" "$command" --bogus
+    [ "$status" -eq 1 ]
+  done
+  run "$PROJECT_ROOT/bin/aegiscope" update --bogus
+  [ "$status" -eq 1 ]
+  run "$PROJECT_ROOT/bin/aegiscope" assets list --bogus
+  [ "$status" -eq 1 ]
+  run "$PROJECT_ROOT/bin/aegiscope" auth list --bogus
+  [ "$status" -eq 1 ]
+  run "$PROJECT_ROOT/bin/aegiscope" plugins list --bogus
+  [ "$status" -eq 1 ]
+}
+
+@test "missing option values produce controlled diagnostics" {
+  run "$PROJECT_ROOT/bin/aegiscope" ports --target
+  [ "$status" -eq 1 ]
+  [[ "$output" != *"unbound variable"* ]]
+  run "$PROJECT_ROOT/bin/aegiscope" assets ingest --manifest
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"requires a value"* ]]
+  run "$PROJECT_ROOT/bin/aegiscope" auth add --name
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"requires a value"* ]]
+  run "$PROJECT_ROOT/bin/aegiscope" plugins run --name
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"requires a value"* ]]
+  for command in pipeline validate api; do
+    run "$PROJECT_ROOT/bin/aegiscope" "$command" --target
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"requires a value"* ]]
+  done
+}
+
+@test "httpx structured output is isolated from implicit model downloads" {
+  mock_httpx_capture
+  run "$PROJECT_ROOT/bin/aegiscope" web --target localhost --mode tech --authorized
+  [ "$status" -eq 0 ]
+  run_dir="$(find "$AEGISCOPE_RESULTS_ROOT" -mindepth 1 -maxdepth 1 -type d -name '*web-tech' -print -quit)"
+  [ -f "$run_dir/.runtime/httpx-home/.dit/model.json" ]
+  grep -q '"isolated_home":true' "$run_dir/httpx-runtime-policy.json"
+  grep -q '"classifier_model_opt_in":false' "$run_dir/httpx-runtime-policy.json"
+  grep -q -- '-disable-update-check' "$run_dir/manifest.json"
+  grep -q -- '-no-stdin' "$run_dir/manifest.json"
+  python - "$run_dir/manifest.json" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+assert not any(path.startswith(".runtime/") for path in data["artifacts"])
+PY
+}
+
+@test "near-empty passive enumeration emits structured low-coverage evidence" {
+  mock_subfinder_empty
+  run "$PROJECT_ROOT/bin/aegiscope" pipeline --target lab.example.com --phase passive --request-rate 10 --authorized
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"passive-source coverage may be incomplete"* ]]
+  run_dir="$(find "$AEGISCOPE_RESULTS_ROOT" -mindepth 1 -maxdepth 1 -type d -name '*pipeline-passive' -print -quit)"
+  grep -q '"unique_hosts":0' "$run_dir/pipeline/subfinder-coverage.json"
+  grep -q '"low_coverage":true' "$run_dir/pipeline/subfinder-coverage.json"
+}
+
+@test "empty successful Nuclei runs are bounded and operator-visible" {
+  mock_nuclei_empty
+  run "$PROJECT_ROOT/bin/aegiscope" validate --target https://localhost --severity high --authorized
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"produced no findings"* ]]
+  grep -q 'nuclei:.*-timeout 10.*-hang-monitor.*-stats.*-no-stdin' "$MOCK_LOG"
+  run_dir="$(find "$AEGISCOPE_RESULTS_ROOT" -mindepth 1 -maxdepth 1 -type d -name '*nuclei-validate' -print -quit)"
+  grep -q '"empty_success":true' "$run_dir/nuclei-coverage.json"
+}
+
+@test "invalid input diagnostics are terminal-safe and bounded" {
+  invalid="--$(python -c 'print("\033[31m\007" + "x" * 5000)')"
+  run "$PROJECT_ROOT/bin/aegiscope" ports "$invalid"
+  [ "$status" -eq 1 ]
+  ((${#output} < 1400))
+  [[ "$output" != *$'\033'* ]]
+  [[ "$output" != *$'\007'* ]]
+  [[ "$output" != *'[31m'* ]]
+  [[ "$output" == *"[truncated]"* ]]
+}

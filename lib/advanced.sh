@@ -38,14 +38,19 @@ EOF
 }
 
 assets_command() {
-  local action="${1:-list}" manifest="" output="${AEGISCOPE_WORKSPACE_ROOT}/dashboard.html"
+  local action="${1:-list}" manifest="" output="${AEGISCOPE_WORKSPACE_ROOT}/dashboard.html" positional=0
+  local -a forwarded=()
   [[ $# -eq 0 ]] || shift
   case "$action" in
-    init) workspace_exec init ;;
+    init)
+      (($# == 0)) || die "unknown assets init option: $1"
+      workspace_exec init
+      ;;
     ingest)
       while (($#)); do
         case "$1" in
           --manifest)
+            require_option_argument "$@"
             manifest="$2"
             shift 2
             ;;
@@ -58,18 +63,65 @@ assets_command() {
         while IFS= read -r manifest; do workspace_exec ingest --manifest "$manifest"; done < <(find "$AEGISCOPE_RESULTS_ROOT" -name manifest.json -type f -print 2>/dev/null | sort)
       fi
       ;;
-    list) workspace_exec assets "$@" ;;
-    graph) workspace_exec graph "$@" ;;
-    diff) workspace_exec diff "$@" ;;
+    list)
+      forwarded=("$@")
+      while (($#)); do
+        case "$1" in
+          --kind | --match | --port | --technology | --limit)
+            require_option_argument "$@"
+            shift 2
+            ;;
+          --json) shift ;;
+          *) die "unknown assets list option: $1" ;;
+        esac
+      done
+      workspace_exec assets "${forwarded[@]}"
+      ;;
+    graph)
+      forwarded=("$@")
+      while (($#)); do
+        case "$1" in
+          --asset | --format)
+            require_option_argument "$@"
+            shift 2
+            ;;
+          --*) die "unknown assets graph option: $1" ;;
+          *)
+            ((positional++)) || true
+            ((positional <= 1)) || die "assets graph accepts only one positional asset"
+            shift
+            ;;
+        esac
+      done
+      workspace_exec graph "${forwarded[@]}"
+      ;;
+    diff)
+      forwarded=("$@")
+      while (($#)); do
+        case "$1" in
+          --baseline | --current | --since)
+            require_option_argument "$@"
+            shift 2
+            ;;
+          --json) shift ;;
+          *) die "unknown assets diff option: $1" ;;
+        esac
+      done
+      workspace_exec diff "${forwarded[@]}"
+      ;;
     dashboard)
       if [[ "${1:-}" == "--output" ]]; then
+        require_option_argument "$@"
         output="$2"
         shift 2
       fi
       (($# == 0)) || die "unknown assets dashboard option: $1"
       workspace_exec dashboard --output "$output"
       ;;
-    -h | --help) assets_usage ;;
+    -h | --help)
+      (($# == 0)) || die "unknown assets option: $1"
+      assets_usage
+      ;;
     *) die "unknown assets action: $action" ;;
   esac
 }
@@ -113,10 +165,12 @@ auth_command() {
       while (($#)); do
         case "$1" in
           --name)
+            require_option_argument "$@"
             name="$2"
             shift 2
             ;;
           --from-file)
+            require_option_argument "$@"
             input="$2"
             shift 2
             ;;
@@ -136,13 +190,14 @@ auth_command() {
       info "Stored auth profile: $name"
       ;;
     list)
+      (($# == 0)) || die "unknown auth list option: $1"
       mkdir -p "$AEGISCOPE_AUTH_ROOT"
       for path in "$AEGISCOPE_AUTH_ROOT"/*.headers; do
         [[ -f "$path" ]] && basename "$path" .headers
       done
       ;;
     show)
-      [[ "${1:-}" == "--name" && $# -ge 2 ]] || die "auth show requires --name"
+      [[ "${1:-}" == "--name" && $# -eq 2 ]] || die "auth show requires exactly --name NAME"
       path="$(auth_profile_path "$2")"
       [[ -f "$path" ]] || die "auth profile not found: $2"
       while IFS= read -r line; do
@@ -150,13 +205,16 @@ auth_command() {
       done <"$path"
       ;;
     remove)
-      [[ "${1:-}" == "--name" && $# -ge 2 ]] || die "auth remove requires --name"
+      [[ "${1:-}" == "--name" && $# -eq 2 ]] || die "auth remove requires exactly --name NAME"
       path="$(auth_profile_path "$2")"
       [[ -f "$path" ]] || die "auth profile not found: $2"
       rm -f -- "$path"
       info "Removed auth profile: $2"
       ;;
-    -h | --help) auth_usage ;;
+    -h | --help)
+      (($# == 0)) || die "unknown auth option: $1"
+      auth_usage
+      ;;
     *) die "unknown auth action: $action" ;;
   esac
 }
@@ -201,7 +259,7 @@ pipeline_mark() {
 }
 
 pipeline_run_tool() {
-  local step="$1" tool="$2" artifact="$3" state_dir="$4" cache_dir="$5" cache_ttl="$6" cache_tmp
+  local step="$1" tool="$2" artifact="$3" state_dir="$4" cache_dir="$5" cache_ttl="$6" cache_tmp tool_status=0
   shift 6
   if [[ -f "${state_dir}/${step}.completed.json" && -e "$artifact" ]]; then
     info "Checkpoint: $step already completed"
@@ -220,7 +278,13 @@ pipeline_run_tool() {
     pipeline_mark "$state_dir" "$step" skipped dependency-missing
     return 127
   fi
-  if run_logged "$artifact" "$@"; then
+  info "Pipeline step: $step"
+  if [[ "$tool" == naabu ]]; then
+    run_logged_timed "$AEGISCOPE_NAABU_TIMEOUT" "$artifact" "$@" || tool_status=$?
+  else
+    run_logged "$artifact" "$@" || tool_status=$?
+  fi
+  if ((tool_status == 0)); then
     pipeline_mark "$state_dir" "$step" completed execution
     if [[ -f "$artifact" && "$cache_ttl" -gt 0 ]]; then
       mkdir -p "$cache_dir"
@@ -234,6 +298,7 @@ pipeline_run_tool() {
     return 0
   fi
   pipeline_mark "$state_dir" "$step" failed execution
+  warn "Pipeline step $step ($tool) failed with exit code $tool_status"
   return 1
 }
 
@@ -259,39 +324,47 @@ filter_scoped_hosts() {
 
 pipeline_command() {
   local target="" phase=all resume="" cache_ttl=86400 request_rate="$AEGISCOPE_MAX_RATE" authorized=0 auth_profile="" provider_rate_limits="" host safe_target state_dir cache_dir status=0 ports=""
-  local pipeline_dir subfinder_json hosts scoped_hosts dnsx_json resolved_hosts naabu_json nmap_prefix httpx_json urls katana_json plan policy header planned_target python resume_stamp
+  local pipeline_dir subfinder_json subfinder_hosts hosts scoped_hosts dnsx_json resolved_hosts naabu_json nmap_prefix httpx_json urls katana_json plan policy header planned_target python resume_stamp
   local -a headers=() cmd=()
   while (($#)); do
     case "$1" in
       --target)
+        require_option_argument "$@"
         target="$2"
         shift 2
         ;;
       --phase)
+        require_option_argument "$@"
         phase="${2,,}"
         shift 2
         ;;
       --resume)
+        require_option_argument "$@"
         resume="$2"
         shift 2
         ;;
       --cache-ttl)
+        require_option_argument "$@"
         cache_ttl="$2"
         shift 2
         ;;
       --auth-profile)
+        require_option_argument "$@"
         auth_profile="$2"
         shift 2
         ;;
       --provider-rate-limits)
+        require_option_argument "$@"
         provider_rate_limits="$2"
         shift 2
         ;;
       --request-rate | --rate)
+        require_option_argument "$@"
         request_rate="$2"
         shift 2
         ;;
       --scope-file)
+        require_option_argument "$@"
         AEGISCOPE_SCOPE_FILE="$2"
         shift 2
         ;;
@@ -300,6 +373,7 @@ pipeline_command() {
         shift
         ;;
       -h | --help)
+        (($# == 1)) || die "unknown pipeline option: $2"
         pipeline_usage
         return 0
         ;;
@@ -358,6 +432,7 @@ pipeline_command() {
   cache_dir="${AEGISCOPE_CACHE_ROOT}/${safe_target}/$(sanitize_name "${auth_profile:-anonymous}")"
   mkdir -p "$pipeline_dir" "$state_dir" "$cache_dir"
   subfinder_json="${pipeline_dir}/subfinder.jsonl"
+  subfinder_hosts="${pipeline_dir}/subfinder-hosts.txt"
   hosts="${pipeline_dir}/hosts.txt"
   scoped_hosts="${pipeline_dir}/scoped-hosts.txt"
   dnsx_json="${pipeline_dir}/dnsx.jsonl"
@@ -381,10 +456,14 @@ pipeline_command() {
   printf '%s\n' "$host" >"$hosts"
 
   if [[ "$phase" == passive || "$phase" == all ]]; then
-    cmd=(subfinder -d "$host" -silent -oJ -cs -rl "$request_rate" -o "$subfinder_json")
+    cmd=(subfinder -d "$host" -silent -oJ -cs -rl "$request_rate" -disable-update-check -no-color -o "$subfinder_json")
     [[ -z "$provider_rate_limits" ]] || cmd+=(-rls "$provider_rate_limits")
     pipeline_run_tool subfinder subfinder "$subfinder_json" "$state_dir" "$cache_dir" "$cache_ttl" "${cmd[@]}" || status=$?
-    [[ ! -s "$subfinder_json" ]] || extract_jsonl_field "$subfinder_json" "$hosts" '.host // .input'
+    : >"$subfinder_hosts"
+    [[ ! -s "$subfinder_json" ]] || extract_jsonl_field "$subfinder_json" "$subfinder_hosts" '.host // .input'
+    record_subfinder_coverage "$subfinder_hosts" "${pipeline_dir}/subfinder-coverage.json"
+    cp "$subfinder_hosts" "$hosts"
+    add_artifact "$subfinder_hosts"
     printf '%s\n' "$host" >>"$hosts"
     sort -u "$hosts" -o "$hosts"
   fi
@@ -394,7 +473,7 @@ pipeline_command() {
 
   if [[ "$phase" == verify || "$phase" == active || "$phase" == all ]]; then
     pipeline_run_tool dnsx dnsx "$dnsx_json" "$state_dir" "$cache_dir" "$cache_ttl" \
-      dnsx -l "$scoped_hosts" -a -aaaa -cname -json -rl "$request_rate" -o "$dnsx_json" || status=$?
+      dnsx -l "$scoped_hosts" -a -aaaa -cname -json -rl "$request_rate" -disable-update-check -no-color -no-stdin -o "$dnsx_json" || status=$?
     if [[ -s "$dnsx_json" ]]; then
       extract_jsonl_field "$dnsx_json" "$resolved_hosts" '.host // .input'
       filter_scoped_hosts "$resolved_hosts" "${resolved_hosts}.scoped"
@@ -409,7 +488,7 @@ pipeline_command() {
 
   if [[ "$phase" == active || "$phase" == all ]]; then
     pipeline_run_tool naabu naabu "$naabu_json" "$state_dir" "$cache_dir" "$cache_ttl" \
-      naabu -list "$resolved_hosts" -silent -json -top-ports 1000 -rate "$request_rate" -o "$naabu_json" || status=$?
+      naabu -list "$resolved_hosts" -silent -json -top-ports 1000 -rate "$request_rate" -timeout 3000 -disable-update-check -no-color -no-stdin -o "$naabu_json" || status=$?
     if [[ -s "$naabu_json" && -x "$(command -v jq 2>/dev/null || true)" ]]; then
       ports="$(jq -r '.port // empty' "$naabu_json" 2>/dev/null | sort -nu | paste -sd, -)"
     fi
@@ -420,7 +499,7 @@ pipeline_command() {
   fi
 
   if [[ "$phase" == verify || "$phase" == active || "$phase" == all ]]; then
-    cmd=(httpx -l "$resolved_hosts" -silent -json -status-code -title -tech-detect -web-server -ip -cname -asn -cdn -rl "$request_rate" -o "$httpx_json")
+    prepare_httpx_command cmd -l "$resolved_hosts" -silent -json -status-code -title -tech-detect -web-server -ip -cname -asn -cdn -rl "$request_rate" -o "$httpx_json"
     for header in "${headers[@]}"; do cmd+=(-H "$header"); done
     pipeline_run_tool httpx httpx "$httpx_json" "$state_dir" "$cache_dir" "$cache_ttl" "${cmd[@]}" || status=$?
     if [[ -s "$httpx_json" ]]; then
@@ -432,7 +511,7 @@ pipeline_command() {
   fi
 
   if [[ "$phase" == active || "$phase" == all ]]; then
-    cmd=(katana -list "$urls" -silent -jsonl -depth 3 -js-crawl -known-files all -crawl-duration 2m -fs fqdn -rate-limit "$request_rate" -o "$katana_json")
+    cmd=(katana -list "$urls" -silent -jsonl -depth 3 -js-crawl -known-files all -crawl-duration 2m -fs fqdn -rate-limit "$request_rate" -disable-update-check -no-color -o "$katana_json")
     for header in "${headers[@]}"; do cmd+=(-H "$header"); done
     pipeline_run_tool katana katana "$katana_json" "$state_dir" "$cache_dir" "$cache_ttl" "${cmd[@]}" || status=$?
   fi
@@ -478,31 +557,37 @@ EOF
 }
 
 validate_command() {
-  local target="" severity="medium,high,critical" tags="" auth_profile="" templates="" expected_digest="" template_digest="installed-default" request_rate="$AEGISCOPE_MAX_RATE" authorized=0 intrusive=0 status=0 output header policy evidence_dir
+  local target="" severity="medium,high,critical" tags="" auth_profile="" templates="" expected_digest="" template_digest="installed-default" request_rate="$AEGISCOPE_MAX_RATE" authorized=0 intrusive=0 status=0 output header policy evidence_dir finding_count=0
   local -a headers=() cmd
   while (($#)); do
     case "$1" in
       --target)
+        require_option_argument "$@"
         target="$2"
         shift 2
         ;;
       --severity)
+        require_option_argument "$@"
         severity="$2"
         shift 2
         ;;
       --tags)
+        require_option_argument "$@"
         tags="$2"
         shift 2
         ;;
       --auth-profile)
+        require_option_argument "$@"
         auth_profile="$2"
         shift 2
         ;;
       --templates)
+        require_option_argument "$@"
         templates="$2"
         shift 2
         ;;
       --template-sha256)
+        require_option_argument "$@"
         expected_digest="${2,,}"
         shift 2
         ;;
@@ -511,10 +596,12 @@ validate_command() {
         shift
         ;;
       --request-rate | --rate)
+        require_option_argument "$@"
         request_rate="$2"
         shift 2
         ;;
       --scope-file)
+        require_option_argument "$@"
         AEGISCOPE_SCOPE_FILE="$2"
         shift 2
         ;;
@@ -523,6 +610,7 @@ validate_command() {
         shift
         ;;
       -h | --help)
+        (($# == 1)) || die "unknown validate option: $2"
         validate_usage
         return 0
         ;;
@@ -548,9 +636,9 @@ validate_command() {
   output="${RUN_DIR}/nuclei.jsonl"
   evidence_dir="${RUN_DIR}/nuclei-evidence"
   policy="${RUN_DIR}/nuclei-policy.json"
-  run_logged_capture "${RUN_DIR}/nuclei-template-version.txt" nuclei -templates-version || true
+  run_logged_capture_timed "$AEGISCOPE_VERSION_TIMEOUT" "${RUN_DIR}/nuclei-template-version.txt" nuclei -templates-version -disable-update-check -no-color || true
   add_artifact "${RUN_DIR}/nuclei-template-version.txt"
-  cmd=(nuclei -u "$target" -silent -jsonl -o "$output" -severity "$severity" -rl "$request_rate" -disable-unsigned-templates -disable-update-check -disable-redirects -no-interactsh -store-resp -store-resp-dir "$evidence_dir")
+  cmd=(nuclei -u "$target" -silent -jsonl -o "$output" -severity "$severity" -rl "$request_rate" -timeout 10 -hang-monitor -stats -stats-interval "$AEGISCOPE_PROGRESS_INTERVAL" -no-color -no-stdin -disable-unsigned-templates -disable-update-check -disable-redirects -no-interactsh -store-resp -store-resp-dir "$evidence_dir")
   [[ -z "$templates" ]] || cmd+=(-templates "$templates")
   [[ -z "$tags" ]] || cmd+=(-tags "$tags")
   if ((intrusive == 1)); then
@@ -562,7 +650,16 @@ validate_command() {
   printf '{"severity":"%s","tags":"%s","unsigned_templates":"disabled","update_check":"disabled","intrusive":%s,"excluded":"%s","template_path":"%s","template_sha256":"%s"}\n' \
     "$(json_escape "$severity")" "$(json_escape "$tags")" "$([[ "$intrusive" == 1 ]] && printf true || printf false)" "$([[ "$intrusive" == 1 ]] && printf 'dos,code' || printf 'dos,code,fuzz,headless')" "$(json_escape "$templates")" "$template_digest" >"$policy"
   add_artifact "$policy"
-  run_logged_sensitive "$output" "${cmd[@]}" || status=$?
+  run_logged_sensitive_timed "$AEGISCOPE_NUCLEI_TIMEOUT" "$output" "${cmd[@]}" || status=$?
+  [[ ! -f "$output" ]] || finding_count="$(wc -l <"$output" | tr -d '[:space:]')"
+  [[ "$finding_count" =~ ^[0-9]+$ ]] || finding_count=0
+  printf '{"findings":%d,"exit_code":%d,"empty_success":%s}\n' "$finding_count" "$status" "$([[ "$status" == 0 && "$finding_count" == 0 ]] && printf true || printf false)" >"${RUN_DIR}/nuclei-coverage.json"
+  add_artifact "${RUN_DIR}/nuclei-coverage.json"
+  if ((status != 0)); then
+    warn "Nuclei validation failed with exit code $status; review the execution record and template evidence"
+  elif ((finding_count == 0)); then
+    warn "Nuclei completed successfully but produced no findings; verify template and target coverage"
+  fi
   collect_new_artifacts
   write_manifest "$status"
   return "$status"
@@ -592,18 +689,22 @@ api_command() {
   while (($#)); do
     case "$1" in
       --target)
+        require_option_argument "$@"
         target="$2"
         shift 2
         ;;
       --spec)
+        require_option_argument "$@"
         spec="$2"
         shift 2
         ;;
       --import)
+        require_option_argument "$@"
         spec="$2"
         shift 2
         ;;
       --format)
+        require_option_argument "$@"
         input_format="${2,,}"
         shift 2
         ;;
@@ -620,14 +721,17 @@ api_command() {
         shift
         ;;
       --auth-profile)
+        require_option_argument "$@"
         auth_profile="$2"
         shift 2
         ;;
       --request-rate | --rate)
+        require_option_argument "$@"
         request_rate="$2"
         shift 2
         ;;
       --scope-file)
+        require_option_argument "$@"
         # Read by core authorization functions.
         # shellcheck disable=SC2034
         AEGISCOPE_SCOPE_FILE="$2"
@@ -638,6 +742,7 @@ api_command() {
         shift
         ;;
       -h | --help)
+        (($# == 1)) || die "unknown api option: $2"
         api_usage
         return 0
         ;;

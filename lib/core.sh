@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 AEGISCOPE_NAME="IronCrypt Aegiscope"
-AEGISCOPE_VERSION="0.4.1"
+AEGISCOPE_VERSION="0.4.2"
 AEGISCOPE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AEGISCOPE_RESULTS_ROOT="${AEGISCOPE_RESULTS_ROOT:-${AEGISCOPE_ROOT}/results}"
 AEGISCOPE_SCOPE_FILE="${AEGISCOPE_SCOPE_FILE:-${AEGISCOPE_ROOT}/config/authorized_scope.txt}"
@@ -17,6 +17,14 @@ AEGISCOPE_MAX_LOAD_CONCURRENCY="${AEGISCOPE_MAX_LOAD_CONCURRENCY:-20}"
 AEGISCOPE_MAX_LOAD_REQUESTS="${AEGISCOPE_MAX_LOAD_REQUESTS:-1000}"
 AEGISCOPE_MAX_REQUEST_BODY_BYTES="${AEGISCOPE_MAX_REQUEST_BODY_BYTES:-1048576}"
 AEGISCOPE_MAX_RECURSION_DEPTH="${AEGISCOPE_MAX_RECURSION_DEPTH:-5}"
+AEGISCOPE_COMMAND_TIMEOUT="${AEGISCOPE_COMMAND_TIMEOUT:-900}"
+AEGISCOPE_VERSION_TIMEOUT="${AEGISCOPE_VERSION_TIMEOUT:-10}"
+AEGISCOPE_WHOIS_TIMEOUT="${AEGISCOPE_WHOIS_TIMEOUT:-30}"
+AEGISCOPE_NAABU_TIMEOUT="${AEGISCOPE_NAABU_TIMEOUT:-900}"
+AEGISCOPE_NUCLEI_TIMEOUT="${AEGISCOPE_NUCLEI_TIMEOUT:-900}"
+AEGISCOPE_PROGRESS_INTERVAL="${AEGISCOPE_PROGRESS_INTERVAL:-15}"
+AEGISCOPE_SUBFINDER_MIN_RESULTS="${AEGISCOPE_SUBFINDER_MIN_RESULTS:-2}"
+AEGISCOPE_HTTPX_ALLOW_MODEL_DOWNLOAD="${AEGISCOPE_HTTPX_ALLOW_MODEL_DOWNLOAD:-0}"
 
 if [[ "${AEGISCOPE_FORCE_COLOR:-0}" == "1" || (-t 1 && -z "${NO_COLOR:-}") ]]; then
   C_RESET=$'\033[0m'
@@ -119,21 +127,49 @@ ui_caution() {
   printf '%s%sCaution:%s %s\n' "$C_BOLD" "$C_YELLOW" "$C_RESET" 'Operate only within applicable law, written authorization, and the configured scope.'
 }
 
+terminal_safe_text() {
+  local value="$1" limit="${2:-1024}" truncated=0 output="" char code index ansi_pattern
+  if ((${#value} > limit)); then
+    value="${value:0:limit}"
+    truncated=1
+  fi
+  ansi_pattern=$'\033''\[[0-9;?]*[ -/]*[@-~]'
+  while [[ "$value" =~ $ansi_pattern ]]; do
+    value="${value/"${BASH_REMATCH[0]}"/}"
+  done
+  for ((index = 0; index < ${#value}; index++)); do
+    char="${value:index:1}"
+    case "$char" in
+      $'\n' | $'\r' | $'\t') output+=' ' ;;
+      *)
+        printf -v code '%d' "'$char"
+        ((code >= 32 && code != 127)) && output+="$char"
+        ;;
+    esac
+  done
+  printf '%s' "$output"
+  ((truncated == 0)) || printf '...[truncated]'
+}
+
 die() {
-  printf '%s%sError:%s %s\n' "$C_BOLD" "$C_RED" "$C_RESET" "$*" >&2
+  printf '%s%sError:%s %s\n' "$C_BOLD" "$C_RED" "$C_RESET" "$(terminal_safe_text "$*")" >&2
   exit 1
 }
 
 warn() {
-  printf '%s%sWarning:%s %s\n' "$C_BOLD" "$C_YELLOW" "$C_RESET" "$*" >&2
+  printf '%s%sWarning:%s %s\n' "$C_BOLD" "$C_YELLOW" "$C_RESET" "$(terminal_safe_text "$*")" >&2
 }
 
 info() {
-  printf '%s%s%s\n' "$C_GREEN" "$*" "$C_RESET"
+  printf '%s%s%s\n' "$C_GREEN" "$(terminal_safe_text "$*")" "$C_RESET"
 }
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+require_option_argument() {
+  (($# >= 2)) || die "option $1 requires a value"
 }
 
 is_positive_integer() {
@@ -141,9 +177,23 @@ is_positive_integer() {
 }
 
 validate_rate() {
-  local rate="$1"
+  local rate="$1" ceiling="$AEGISCOPE_MAX_RATE"
+  is_positive_integer "$ceiling" && ((${#ceiling} <= 9)) || die "AEGISCOPE_MAX_RATE must be a positive integer of at most 9 digits"
   is_positive_integer "$rate" || die "request rate must be a positive integer"
-  ((rate <= AEGISCOPE_MAX_RATE)) || die "request rate ${rate} exceeds the configured ceiling ${AEGISCOPE_MAX_RATE}"
+  ((${#rate} <= 9)) || die "request rate is too large"
+  ((10#$rate <= 10#$ceiling)) || die "request rate ${rate} exceeds the configured ceiling ${ceiling}"
+}
+
+validate_runtime_configuration() {
+  local name value
+  for name in AEGISCOPE_COMMAND_TIMEOUT AEGISCOPE_VERSION_TIMEOUT AEGISCOPE_WHOIS_TIMEOUT AEGISCOPE_NAABU_TIMEOUT AEGISCOPE_NUCLEI_TIMEOUT AEGISCOPE_PROGRESS_INTERVAL; do
+    value="${!name}"
+    is_positive_integer "$value" && ((${#value} <= 9)) || die "$name must be a positive integer of at most 9 digits"
+  done
+  value="$AEGISCOPE_SUBFINDER_MIN_RESULTS"
+  [[ "$value" =~ ^[0-9]+$ ]] && ((${#value} <= 9)) || die "AEGISCOPE_SUBFINDER_MIN_RESULTS must be a non-negative integer of at most 9 digits"
+  [[ "$AEGISCOPE_HTTPX_ALLOW_MODEL_DOWNLOAD" == 0 || "$AEGISCOPE_HTTPX_ALLOW_MODEL_DOWNLOAD" == 1 ]] || die "AEGISCOPE_HTTPX_ALLOW_MODEL_DOWNLOAD must be 0 or 1"
+  validate_rate 1
 }
 
 validate_header() {
@@ -291,15 +341,29 @@ authorize_target() {
 }
 
 json_escape() {
-  local value="$1"
-  value="${value//\\/\\\\}"
-  value="${value//\"/\\\"}"
-  value="${value//$'\n'/\\n}"
-  value="${value//$'\r'/\\r}"
-  value="${value//$'\t'/\\t}"
-  value="${value//$'\b'/\\b}"
-  value="${value//$'\f'/\\f}"
-  printf '%s' "$value"
+  local value="$1" output="" char escaped code index
+  for ((index = 0; index < ${#value}; index++)); do
+    char="${value:index:1}"
+    case "$char" in
+      '"') output+='\"' ;;
+      '\') output+='\\' ;;
+      $'\b') output+='\b' ;;
+      $'\f') output+='\f' ;;
+      $'\n') output+='\n' ;;
+      $'\r') output+='\r' ;;
+      $'\t') output+='\t' ;;
+      *)
+        printf -v code '%d' "'$char"
+        if ((code < 32 || code == 127)); then
+          printf -v escaped '\\u%04x' "$code"
+          output+="$escaped"
+        else
+          output+="$char"
+        fi
+        ;;
+    esac
+  done
+  printf '%s' "$output"
 }
 
 command_string() {
@@ -311,15 +375,130 @@ command_string() {
   printf '%s' "$output"
 }
 
+command_label() {
+  local arg
+  if [[ "${1:-}" == env ]]; then shift; fi
+  for arg in "$@"; do
+    [[ "$arg" == *=* ]] && continue
+    printf '%s' "${arg##*/}"
+    return
+  done
+  printf 'external command'
+}
+
 tool_version() {
-  local tool="$1" output
+  local tool="$1" output status=0
+  local -a args=()
   if ! command -v "$tool" >/dev/null 2>&1; then
     printf 'not installed'
     return
   fi
-  output="$($tool --version 2>&1 | head -n 1 || true)"
-  [[ -n "$output" ]] || output="installed"
+  case "$tool" in
+    ffuf) args=(-V) ;;
+    gobuster | k6 | openssl | shodan) args=(version) ;;
+    subfinder | dnsx | naabu | httpx | katana | nuclei) args=(-version) ;;
+    dig) args=(-v) ;;
+    ping | tracepath) args=(-V) ;;
+    hey) args=(-version) ;;
+    *) args=(--version) ;;
+  esac
+  output="$(NO_COLOR=1 TERM=dumb execute_bounded "$AEGISCOPE_VERSION_TIMEOUT" "$tool" "${args[@]}" 2>&1)" || status=$?
+  output="${output%%$'\n'*}"
+  output="$(strip_ansi "$output")"
+  if ((status != 0)) || [[ -z "$output" ]]; then
+    output="installed (version unavailable)"
+  fi
   printf '%s' "$output"
+}
+
+strip_ansi() {
+  local value="$1" ansi_pattern
+  ansi_pattern=$'\033''\[[0-9;?]*[ -/]*[@-~]'
+  while [[ "$value" =~ $ansi_pattern ]]; do
+    value="${value/"${BASH_REMATCH[0]}"/}"
+  done
+  terminal_safe_text "$value" 512
+}
+
+timeout_binary() {
+  if command -v timeout >/dev/null 2>&1; then
+    printf '%s' timeout
+  elif command -v gtimeout >/dev/null 2>&1; then
+    printf '%s' gtimeout
+  else
+    return 1
+  fi
+}
+
+execute_bounded() {
+  local seconds="$1" timeout_cmd
+  shift
+  timeout_cmd="$(timeout_binary)" || die "required command not found: timeout (GNU coreutils)"
+  "$timeout_cmd" --signal=TERM --kill-after=5s "${seconds}s" "$@"
+}
+
+PROGRESS_PID=""
+
+progress_start() {
+  local label="$1" seconds="$2" interval="$AEGISCOPE_PROGRESS_INTERVAL"
+  info "Starting ${label} (deadline: ${seconds}s)"
+  PROGRESS_PID=""
+  [[ -t 2 ]] || return 0
+  (
+    local elapsed=0
+    while sleep "$interval"; do
+      elapsed=$((elapsed + interval))
+      printf '%sProgress:%s %s running for %ss (deadline %ss)\n' "$C_BLUE" "$C_RESET" "$(terminal_safe_text "$label" 128)" "$elapsed" "$seconds" >&2
+    done
+  ) &
+  PROGRESS_PID=$!
+}
+
+progress_stop() {
+  [[ -n "$PROGRESS_PID" ]] || return 0
+  kill "$PROGRESS_PID" 2>/dev/null || true
+  wait "$PROGRESS_PID" 2>/dev/null || true
+  PROGRESS_PID=""
+}
+
+report_timeout() {
+  local status="$1" label="$2" seconds="$3"
+  ((status != 124 && status != 137)) || warn "$label exceeded its ${seconds}s deadline and was terminated"
+}
+
+prepare_httpx_command() {
+  local destination_name="$1"
+  shift
+  local -n destination="$destination_name"
+  local runtime_home policy="${RUN_DIR}/httpx-runtime-policy.json"
+  if [[ "$AEGISCOPE_HTTPX_ALLOW_MODEL_DOWNLOAD" == 1 ]]; then
+    printf '%s\n' '{"update_check":false,"stdin":false,"isolated_home":false,"classifier_model_opt_in":true}' >"$policy"
+    add_artifact "$policy"
+    # Assigned through a nameref supplied by the caller.
+    # shellcheck disable=SC2034
+    destination=(httpx -disable-update-check -no-color -no-stdin "$@")
+    return
+  fi
+  runtime_home="${RUN_DIR}/.runtime/httpx-home"
+  mkdir -p "${runtime_home}/.dit"
+  printf '%s\n' 'offline-model-download-disabled' >"${runtime_home}/.dit/model.json"
+  chmod 600 "${runtime_home}/.dit/model.json" 2>/dev/null || true
+  printf '%s\n' '{"update_check":false,"stdin":false,"isolated_home":true,"classifier_model_opt_in":false}' >"$policy"
+  add_artifact "$policy"
+  # shellcheck disable=SC2034
+  destination=(env HOME="$runtime_home" httpx -disable-update-check -no-color -no-stdin "$@")
+}
+
+record_subfinder_coverage() {
+  local hosts_file="$1" report_file="$2" count=0 low=false
+  [[ ! -f "$hosts_file" ]] || count="$(wc -l <"$hosts_file" | tr -d '[:space:]')"
+  [[ "$count" =~ ^[0-9]+$ ]] || count=0
+  if ((count < AEGISCOPE_SUBFINDER_MIN_RESULTS)); then
+    low=true
+    warn "Subfinder returned only ${count} unique host(s); passive-source coverage may be incomplete"
+  fi
+  printf '{"unique_hosts":%d,"warning_threshold":%d,"low_coverage":%s}\n' "$count" "$AEGISCOPE_SUBFINDER_MIN_RESULTS" "$low" >"$report_file"
+  add_artifact "$report_file"
 }
 
 declare -a RUN_COMMANDS=()
@@ -391,13 +570,23 @@ add_artifact() {
 }
 
 run_logged() {
-  local artifact="$1" started completed status display
+  run_logged_timed "$AEGISCOPE_COMMAND_TIMEOUT" "$@"
+}
+
+run_logged_timed() {
+  local deadline="$1"
+  shift
+  local artifact="$1" started completed status display label
   shift
   display="$(command_string "$@")"
+  label="$(command_label "$@")"
   RUN_COMMANDS+=("$display")
   started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  "$@"
+  progress_start "$label" "$deadline"
+  execute_bounded "$deadline" "$@"
   status=$?
+  progress_stop
+  report_timeout "$status" "$label" "$deadline"
   completed="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   record_execution "$display" "$artifact" "$started" "$completed" "$status"
   if [[ -n "$artifact" && -e "$artifact" ]]; then
@@ -407,13 +596,23 @@ run_logged() {
 }
 
 run_logged_capture() {
-  local artifact="$1" started completed status display
+  run_logged_capture_timed "$AEGISCOPE_COMMAND_TIMEOUT" "$@"
+}
+
+run_logged_capture_timed() {
+  local deadline="$1"
+  shift
+  local artifact="$1" started completed status display label
   shift
   display="$(command_string "$@")"
+  label="$(command_label "$@")"
   RUN_COMMANDS+=("$display")
   started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  "$@" >"$artifact" 2>&1
+  progress_start "$label" "$deadline"
+  execute_bounded "$deadline" "$@" >"$artifact" 2>&1
   status=$?
+  progress_stop
+  report_timeout "$status" "$label" "$deadline"
   completed="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   record_execution "$display" "$artifact" "$started" "$completed" "$status"
   add_artifact "$artifact"
@@ -442,14 +641,24 @@ sensitive_command_string() {
 }
 
 run_logged_sensitive() {
-  local artifact="$1" started completed status display
+  run_logged_sensitive_timed "$AEGISCOPE_COMMAND_TIMEOUT" "$@"
+}
+
+run_logged_sensitive_timed() {
+  local deadline="$1"
+  shift
+  local artifact="$1" started completed status display label
   shift
   local -a actual=("$@")
   display="$(sensitive_command_string "${actual[@]}")"
+  label="$(command_label "${actual[@]}")"
   RUN_COMMANDS+=("$display")
   started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  "${actual[@]}"
+  progress_start "$label" "$deadline"
+  execute_bounded "$deadline" "${actual[@]}"
   status=$?
+  progress_stop
+  report_timeout "$status" "$label" "$deadline"
   completed="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   record_execution "$display" "$artifact" "$started" "$completed" "$status"
   if [[ -n "$artifact" && -e "$artifact" ]]; then
@@ -459,14 +668,24 @@ run_logged_sensitive() {
 }
 
 run_logged_sensitive_capture() {
-  local artifact="$1" started completed status display
+  run_logged_sensitive_capture_timed "$AEGISCOPE_COMMAND_TIMEOUT" "$@"
+}
+
+run_logged_sensitive_capture_timed() {
+  local deadline="$1"
+  shift
+  local artifact="$1" started completed status display label
   shift
   local -a actual=("$@")
   display="$(sensitive_command_string "${actual[@]}")"
+  label="$(command_label "${actual[@]}")"
   RUN_COMMANDS+=("$display")
   started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  "${actual[@]}" >"$artifact" 2>&1
+  progress_start "$label" "$deadline"
+  execute_bounded "$deadline" "${actual[@]}" >"$artifact" 2>&1
   status=$?
+  progress_stop
+  report_timeout "$status" "$label" "$deadline"
   completed="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   record_execution "$display" "$artifact" "$started" "$completed" "$status"
   add_artifact "$artifact"
@@ -474,7 +693,7 @@ run_logged_sensitive_capture() {
 }
 
 write_manifest() {
-  local exit_code="$1" status completed index tool first artifact relative size digest evidence_key manifest_tmp
+  local exit_code="$1" status completed index tool first artifact relative size digest evidence_key manifest_tmp python
   local -A seen_artifacts=()
   completed="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   manifest_tmp="${RUN_DIR}/.manifest.${BASHPID:-$$}.${RANDOM}.tmp"
@@ -520,7 +739,7 @@ write_manifest() {
     printf '],\n'
     printf '  "tool_versions": {'
     first=1
-    for tool in nmap curl openssl ffuf gobuster subfinder dnsx naabu httpx katana nuclei testssl.sh whatweb dig whois shodan hey k6 python3; do
+    for tool in bash timeout curl python3 jq sqlite3 nmap openssl ffuf gobuster subfinder sublist3r assetfinder dnsx naabu httpx katana nuclei testssl.sh testssl whatweb dig whois ping traceroute tracepath shodan hey k6; do
       ((first == 0)) && printf ', '
       first=0
       printf '"%s": "%s"' "$tool" "$(json_escape "$(tool_version "$tool")")"
@@ -553,6 +772,12 @@ write_manifest() {
     done
     printf ']\n}\n'
   } >"$manifest_tmp"
+  python="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
+  [[ -n "$python" ]] || die "Python 3 is required to validate the run manifest"
+  if ! "$python" -c 'import json,sys; json.load(open(sys.argv[1], encoding="utf-8"))' "$manifest_tmp"; then
+    rm -f -- "$manifest_tmp"
+    die "generated manifest failed JSON validation"
+  fi
   mv "$manifest_tmp" "${RUN_DIR}/manifest.json" || die "unable to publish run manifest"
   info "Manifest: ${RUN_DIR}/manifest.json"
   if declare -F workspace_ingest_manifest >/dev/null 2>&1; then

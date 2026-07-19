@@ -6,7 +6,7 @@ IronCrypt Aegiscope is a personal, authorization-first reconnaissance workspace 
 
 ## Release status
 
-The current release is **Aegiscope 0.4.1**. The repository quality gate covers Bash syntax, ShellCheck, shfmt, Python compilation, JSON validation, executable permissions, and mocked Bats integration tests. The mocked suite validates orchestration and evidence handling without scanning live targets; operators should still complete an authorized lab acceptance run with their installed external-tool versions before production use.
+The current release is **Aegiscope 0.4.2**. The repository quality gate covers Bash syntax, ShellCheck, shfmt, Python compilation, JSON validation, executable permissions, and mocked Bats integration tests. The mocked suite validates orchestration and evidence handling without scanning live targets; operators should still complete an authorized lab acceptance run with their installed external-tool versions before production use.
 
 ## What it provides
 
@@ -44,10 +44,10 @@ Core Debian/Ubuntu packages:
 
 ```bash
 sudo apt update
-sudo apt install -y bash curl python3 python3-yaml sqlite3 nmap openssl jq dnsutils whois traceroute gobuster
+sudo apt install -y bash curl coreutils python3 python3-yaml sqlite3 nmap openssl jq dnsutils whois traceroute gobuster
 ```
 
-Optional integrations use their official installation instructions: [ffuf](https://github.com/ffuf/ffuf), [Subfinder](https://docs.projectdiscovery.io/opensource/subfinder/install), [dnsx](https://docs.projectdiscovery.io/opensource/dnsx/install), [Naabu](https://docs.projectdiscovery.io/opensource/naabu/install), [httpx](https://docs.projectdiscovery.io/opensource/httpx/install), [Katana](https://docs.projectdiscovery.io/opensource/katana/install), [Nuclei](https://docs.projectdiscovery.io/opensource/nuclei/install), [testssl.sh](https://github.com/testssl/testssl.sh), [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/), and [hey](https://github.com/rakyll/hey).
+The phased pipeline requires the tools used by the selected phase: Subfinder for `passive`, dnsx and httpx for `verify`, and Naabu, Nmap and Katana for `active`. Install them from their official instructions: [Subfinder](https://docs.projectdiscovery.io/opensource/subfinder/install), [dnsx](https://docs.projectdiscovery.io/opensource/dnsx/install), [Naabu](https://docs.projectdiscovery.io/opensource/naabu/install), [httpx](https://docs.projectdiscovery.io/opensource/httpx/install), and [Katana](https://docs.projectdiscovery.io/opensource/katana/install). Optional integrations include [ffuf](https://github.com/ffuf/ffuf), [Nuclei](https://docs.projectdiscovery.io/opensource/nuclei/install), [testssl.sh](https://github.com/testssl/testssl.sh), [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/), and [hey](https://github.com/rakyll/hey).
 
 Check what is available:
 
@@ -65,7 +65,11 @@ app.lab.example.com
 192.0.2.0/24
 ```
 
-Targets outside the scope file are rejected. Direct commands also require `--authorized`; this asserts written authorization but never bypasses scope. The global request ceiling defaults to 100 and can be lowered with `AEGISCOPE_MAX_RATE`.
+Targets outside the scope file are rejected. Direct commands also require `--authorized`; this asserts written authorization but never bypasses scope. The global request ceiling defaults to 100 and can be lowered with `AEGISCOPE_MAX_RATE`. External commands have a 900-second default deadline controlled by `AEGISCOPE_COMMAND_TIMEOUT`; Whois, Naabu and Nuclei have narrower integration-specific settings. Long-running commands emit a start notice and interactive heartbeat.
+
+Runtime safety defaults are `AEGISCOPE_VERSION_TIMEOUT=10`, `AEGISCOPE_WHOIS_TIMEOUT=30`, `AEGISCOPE_NAABU_TIMEOUT=900`, `AEGISCOPE_NUCLEI_TIMEOUT=900`, `AEGISCOPE_PROGRESS_INTERVAL=15`, and `AEGISCOPE_SUBFINDER_MIN_RESULTS=2`. Every value is validated before execution.
+
+Structured httpx runs disable update checks and use an isolated classifier directory by default. [httpx v1.8.1 embeds its classifier](https://github.com/projectdiscovery/httpx/blob/v1.8.1/common/pagetypeclassifier/pagetypeclassifier.go), while [httpx v1.9.0 initializes DIT for structured output](https://github.com/projectdiscovery/httpx/blob/v1.9.0/runner/runner.go) and [DIT v0.0.14 only searches for a local model](https://github.com/happyhackingspace/dit/blob/v0.0.14/dit.go). The isolation guard prevents variant or future model-acquisition paths from using the operator's normal home directory. Each run records `httpx-runtime-policy.json`. Set `AEGISCOPE_HTTPX_ALLOW_MODEL_DOWNLOAD=1` only after the installed httpx build and any classifier acquisition have been reviewed and approved.
 
 ## Quick examples
 

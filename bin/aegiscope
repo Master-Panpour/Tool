@@ -115,6 +115,7 @@ ports_command() {
         shift
         ;;
       -h | --help)
+        (($# == 1)) || die "unknown ports option: $2"
         ports_usage
         return 0
         ;;
@@ -197,7 +198,7 @@ collect_new_artifacts() {
   local file
   while IFS= read -r file; do
     case " ${RUN_ARTIFACTS[*]} " in *" ${file#"$RUN_DIR"/} "*) ;; *) add_artifact "$file" ;; esac
-  done < <(find "$RUN_DIR" -type f ! -name manifest.json -print)
+  done < <(find "$RUN_DIR" -type f ! -name manifest.json ! -path "$RUN_DIR/.runtime/*" -print)
 }
 
 run_ffuf_dir() {
@@ -265,8 +266,10 @@ run_dns_enum() {
 
 run_technology_analysis() {
   local url="$1" rate="$2" status=0
+  local -a cmd
   if command -v httpx >/dev/null 2>&1; then
-    run_logged_capture "${RUN_DIR}/technology-httpx.jsonl" httpx -u "$url" -rl "$rate" -silent -status-code -title -tech-detect -web-server -ip -cname -asn -cdn -json || status=$?
+    prepare_httpx_command cmd -u "$url" -rl "$rate" -silent -status-code -title -tech-detect -web-server -ip -cname -asn -cdn -json -o "${RUN_DIR}/technology-httpx.jsonl"
+    run_logged "${RUN_DIR}/technology-httpx.jsonl" "${cmd[@]}" || status=$?
   elif command -v whatweb >/dev/null 2>&1; then
     run_logged_capture "${RUN_DIR}/technology-whatweb.txt" whatweb "$url" || status=$?
   else
@@ -285,15 +288,17 @@ run_subdomains() {
   scoped_hosts="${RUN_DIR}/subdomains-scoped.txt"
   enriched="${RUN_DIR}/httpx.jsonl"
   if command -v subfinder >/dev/null 2>&1; then
-    cmd=(subfinder -d "$host" -rl "$rate" -oJ -cs -o "$jsonl")
+    cmd=(subfinder -d "$host" -rl "$rate" -oJ -cs -disable-update-check -no-color -o "$jsonl")
     [[ -z "$provider_rate_limits" ]] || cmd+=(-rls "$provider_rate_limits")
     run_logged "$jsonl" "${cmd[@]}" || status=$?
     extract_jsonl_field "$jsonl" "$hosts" '.host // .input'
     add_artifact "$hosts"
+    record_subfinder_coverage "$hosts" "${RUN_DIR}/subfinder-coverage.json"
     filter_scoped_hosts "$hosts" "$scoped_hosts"
     add_artifact "$scoped_hosts"
     if [[ -s "$scoped_hosts" ]] && command -v httpx >/dev/null 2>&1; then
-      run_logged "$enriched" httpx -l "$scoped_hosts" -rl "$rate" -silent -status-code -title -tech-detect -web-server -ip -cname -json -o "$enriched" || status=$?
+      prepare_httpx_command cmd -l "$scoped_hosts" -rl "$rate" -silent -status-code -title -tech-detect -web-server -ip -cname -json -o "$enriched"
+      run_logged "$enriched" "${cmd[@]}" || status=$?
     elif [[ -s "$scoped_hosts" ]]; then
       warn "httpx is required to enrich discovered subdomains"
       ((status == 0)) && status=2
@@ -451,6 +456,7 @@ web_command() {
         shift
         ;;
       -h | --help)
+        (($# == 1)) || die "unknown web option: $2"
         web_usage
         return 0
         ;;
@@ -587,7 +593,7 @@ recon_server() {
     run_logged_capture "${RUN_DIR}/01-server-fingerprint/dns-aaaa.txt" dig AAAA "$host" || true
   fi
   if command -v whois >/dev/null 2>&1; then
-    run_logged_capture "${RUN_DIR}/01-server-fingerprint/whois.txt" whois "$host" || true
+    run_logged_capture_timed "$AEGISCOPE_WHOIS_TIMEOUT" "${RUN_DIR}/01-server-fingerprint/whois.txt" whois "$host" || true
   fi
   run_http_analysis "$url" "01-server-fingerprint/http" || status=$?
   return "$status"
@@ -605,9 +611,11 @@ recon_metafiles() {
 
 recon_applications() {
   local url="$1" rate="$2" status=0
+  local -a cmd
   mkdir -p "${RUN_DIR}/03-applications"
   if command -v httpx >/dev/null 2>&1; then
-    run_logged_capture "${RUN_DIR}/03-applications/httpx.jsonl" httpx -u "$url" -rl "$rate" -silent -status-code -title -tech-detect -web-server -ip -cname -json || status=$?
+    prepare_httpx_command cmd -u "$url" -rl "$rate" -silent -status-code -title -tech-detect -web-server -ip -cname -json -o "${RUN_DIR}/03-applications/httpx.jsonl"
+    run_logged "${RUN_DIR}/03-applications/httpx.jsonl" "${cmd[@]}" || status=$?
   elif command -v whatweb >/dev/null 2>&1; then
     run_logged_capture "${RUN_DIR}/03-applications/whatweb.txt" whatweb "$url" || status=$?
   else
@@ -639,6 +647,7 @@ recon_paths() {
 
 recon_architecture() {
   local target="$1" url="$2" rate="$3" host status=0
+  local -a cmd
   host="$(normalize_scope_target "$target")"
   mkdir -p "${RUN_DIR}/06-architecture"
   if command -v dig >/dev/null 2>&1; then
@@ -653,7 +662,8 @@ recon_architecture() {
     run_logged_capture "${RUN_DIR}/06-architecture/tracepath.txt" tracepath "$host" || true
   fi
   if command -v httpx >/dev/null 2>&1; then
-    run_logged_capture "${RUN_DIR}/06-architecture/httpx.jsonl" httpx -u "$url" -rl "$rate" -silent -status-code -title -tech-detect -web-server -ip -cname -asn -cdn -json || status=$?
+    prepare_httpx_command cmd -u "$url" -rl "$rate" -silent -status-code -title -tech-detect -web-server -ip -cname -asn -cdn -json -o "${RUN_DIR}/06-architecture/httpx.jsonl"
+    run_logged "${RUN_DIR}/06-architecture/httpx.jsonl" "${cmd[@]}" || status=$?
   fi
   return "$status"
 }
@@ -691,6 +701,7 @@ recon_command() {
         shift
         ;;
       -h | --help)
+        (($# == 1)) || die "unknown recon option: $2"
         recon_usage
         return 0
         ;;
@@ -847,6 +858,7 @@ xss_command() {
         shift
         ;;
       -h | --help)
+        (($# == 1)) || die "unknown xss option: $2"
         xss_usage
         return 0
         ;;
@@ -1146,6 +1158,7 @@ load_command() {
         shift
         ;;
       -h | --help)
+        (($# == 1)) || die "unknown load option: $2"
         load_usage
         return 0
         ;;
@@ -1214,6 +1227,7 @@ compare_command() {
         shift 2
         ;;
       -h | --help)
+        (($# == 1)) || die "unknown compare option: $2"
         printf 'Usage: aegiscope compare [--baseline RUN_DIRECTORY] [--current RUN_DIRECTORY]\n'
         return 0
         ;;
@@ -1244,6 +1258,16 @@ compare_command() {
 
 doctor_command() {
   local tool category state version missing_core=0 python_cmd
+  if (($#)); then
+    case "$1" in
+      -h | --help)
+        (($# == 1)) || die "unknown doctor option: $2"
+        printf 'Usage: aegiscope doctor\n'
+        return 0
+        ;;
+      *) die "unknown doctor option: $1" ;;
+    esac
+  fi
   printf '%s %s\n' "$AEGISCOPE_NAME" "$AEGISCOPE_VERSION"
   printf 'Scope file: %s (%s)\n' "$AEGISCOPE_SCOPE_FILE" "$([[ -f "$AEGISCOPE_SCOPE_FILE" ]] && printf present || printf missing)"
   printf 'Results root: %s\n' "$AEGISCOPE_RESULTS_ROOT"
@@ -1251,8 +1275,8 @@ doctor_command() {
   printf 'Plugin root: %s\n' "$AEGISCOPE_PLUGIN_ROOT"
   printf 'Rate ceiling: %s\n\n' "$AEGISCOPE_MAX_RATE"
   printf '%-14s %-10s %s\n' TOOL CATEGORY STATUS
-  for tool in bash curl python3 nmap openssl jq dig whois ping traceroute tracepath ffuf gobuster subfinder dnsx naabu httpx katana nuclei testssl.sh whatweb shodan k6 hey shellcheck shfmt bats; do
-    case "$tool" in bash | curl | python3) category="core" ;; nmap | openssl | jq | dig | whois | ping | traceroute | subfinder | dnsx | naabu | httpx | katana) category="recommended" ;; *) category="optional" ;; esac
+  for tool in bash curl python3 timeout nmap openssl jq dig whois ping traceroute tracepath ffuf gobuster subfinder dnsx naabu httpx katana nuclei testssl.sh whatweb shodan k6 hey shellcheck shfmt bats; do
+    case "$tool" in bash | curl | python3 | timeout) category="core" ;; subfinder | dnsx | naabu | nmap | httpx | katana) category="pipeline" ;; openssl | jq | dig | whois | ping | traceroute) category="recommended" ;; *) category="optional" ;; esac
     if [[ "$tool" == python3 ]]; then
       python_cmd="$(workspace_python 2>/dev/null || true)"
       if [[ -n "$python_cmd" ]]; then
@@ -1306,6 +1330,7 @@ report_command() {
         shift
         ;;
       -h | --help)
+        (($# == 1)) || die "unknown report option: $2"
         cat <<'EOF'
 Usage: aegiscope report [options]
 
@@ -1336,13 +1361,20 @@ EOF
 }
 
 update_command() {
-  [[ "${1:-}" == "--check" ]] || die "updates are explicit and check-only here; use: aegiscope update --check"
+  [[ $# -eq 1 && "${1:-}" == "--check" ]] || die "updates are explicit and check-only here; use: aegiscope update --check"
   command -v git >/dev/null 2>&1 || die "git is required"
   [[ -d "${AEGISCOPE_ROOT}/.git" ]] || die "not a Git checkout"
-  local branch local_rev remote_rev
+  local branch local_rev remote_rev fetch_status=0
   branch="$(git -C "$AEGISCOPE_ROOT" branch --show-current)"
   [[ -n "$branch" ]] || die "detached HEAD; update manually"
-  git -C "$AEGISCOPE_ROOT" fetch origin "$branch" --quiet || die "unable to fetch origin/$branch"
+  progress_start git-fetch "$AEGISCOPE_COMMAND_TIMEOUT"
+  execute_bounded "$AEGISCOPE_COMMAND_TIMEOUT" git -C "$AEGISCOPE_ROOT" fetch origin "$branch" --quiet || fetch_status=$?
+  if ((fetch_status != 0)); then
+    progress_stop
+    report_timeout "$fetch_status" git-fetch "$AEGISCOPE_COMMAND_TIMEOUT"
+    die "unable to fetch origin/$branch"
+  fi
+  progress_stop
   local_rev="$(git -C "$AEGISCOPE_ROOT" rev-parse HEAD)"
   remote_rev="$(git -C "$AEGISCOPE_ROOT" rev-parse "origin/$branch")"
   if [[ "$local_rev" == "$remote_rev" ]]; then
@@ -1952,6 +1984,7 @@ interactive_menu() {
 
 main() {
   local command="${1:-}"
+  validate_runtime_configuration
   if [[ -z "$command" ]]; then
     interactive_menu
     return
@@ -1976,8 +2009,14 @@ main() {
     compare) compare_command "$@" ;;
     diff) assets_command diff "$@" ;;
     update) update_command "$@" ;;
-    help | -h | --help) usage ;;
-    version | --version) printf '%s %s\n' "$AEGISCOPE_NAME" "$AEGISCOPE_VERSION" ;;
+    help | -h | --help)
+      (($# == 0)) || die "unknown help option: $1"
+      usage
+      ;;
+    version | --version)
+      (($# == 0)) || die "unknown version option: $1"
+      printf '%s %s\n' "$AEGISCOPE_NAME" "$AEGISCOPE_VERSION"
+      ;;
     ddos) load_command "$@" ;;
     *)
       usage >&2

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.2 - Unreleased
+
+### Fixed
+
+- Enforced command, plugin, version-probe, Whois, Naabu, and Nuclei deadlines with operator-visible start and heartbeat messages.
+- Escaped every JSON control character, stripped ANSI from version evidence, removed terminal control bytes from diagnostics, and validated manifests before publishing or ingestion.
+- Replaced the generic version probe with tool-specific commands and bounded every probe.
+- Isolated httpx classifier state, disabled update checks, and recorded the runtime policy while preserving an explicit classifier-model opt-in.
+- Added controlled validation for runtime ceilings and missing values, consistent unknown-option rejection, complete fallback-tool evidence, passive-coverage warnings, and empty-success Nuclei evidence.
+
+### Changed
+
+- Clarified phase-required versus optional dependencies and corrected pipeline phase documentation.
+
 ## 0.4.1 - Unreleased
 
 ### Added

@@ -42,8 +42,8 @@ Phases:
 | Phase | Work |
 |---|---|
 | `passive` | Subfinder source-attributed domain collection |
-| `verify` | dnsx resolution, Naabu port discovery, Nmap service evidence, httpx web enrichment |
-| `active` | Katana scoped endpoint crawling |
+| `verify` | dnsx resolution and httpx web enrichment |
+| `active` | Naabu port discovery, Nmap service evidence, and Katana scoped endpoint crawling |
 | `all` | Passive, verification, and active phases |
 
 The pipeline writes per-tool checkpoints, a machine-readable phase policy, and credential-aware cache entries. Required missing phase dependencies make automation fail instead of silently reducing coverage. Nmap receives the complete resolved in-scope host list. Continue an interrupted run with `resume`; use `retry --failed-only` to rerun steps that lack completed checkpoints. Resume is locked to the original target, and earlier manifests, plans, and failed checkpoint states are retained under history directories.

@@ -37,11 +37,33 @@ Only install and run locally reviewed plugin files.
 EOF
 }
 
+plugin_execute_bounded() {
+  local plugin_file="$1" target="$2" run_dir="$3" request_rate="$4" status=0 label
+  label="plugin-${AEGIS_PLUGIN_NAME:-execution}"
+  progress_start "$label" "$AEGISCOPE_COMMAND_TIMEOUT"
+  execute_bounded "$AEGISCOPE_COMMAND_TIMEOUT" bash --noprofile --norc -c '
+    root="$1"
+    plugin_file="$2"
+    target="$3"
+    run_dir="$4"
+    request_rate="$5"
+    source "${root}/lib/core.sh"
+    source "$plugin_file"
+    AEGIS_PLUGIN_COMMAND=()
+    aegis_plugin_build_command "$target" "$run_dir" "$request_rate"
+    aegis_plugin_execute "$target" "$run_dir" "$request_rate"
+  ' aegiscope-plugin "$AEGISCOPE_ROOT" "$plugin_file" "$target" "$run_dir" "$request_rate" || status=$?
+  progress_stop
+  report_timeout "$status" "$label" "$AEGISCOPE_COMMAND_TIMEOUT"
+  return "$status"
+}
+
 plugins_command() {
   local action="${1:-list}" name="" target="" request_rate="$AEGISCOPE_MAX_RATE" authorized=0 path status=0 artifact resolved display started completed execution_status=0
   [[ $# -eq 0 ]] || shift
   case "$action" in
     list)
+      (($# == 0)) || die "unknown plugins list option: $1"
       mkdir -p "$AEGISCOPE_PLUGIN_ROOT"
       for path in "$AEGISCOPE_PLUGIN_ROOT"/*.sh; do
         [[ -f "$path" ]] || continue
@@ -51,6 +73,7 @@ plugins_command() {
       done
       ;;
     doctor)
+      (($# == 0)) || die "unknown plugins doctor option: $1"
       mkdir -p "$AEGISCOPE_PLUGIN_ROOT"
       for path in "$AEGISCOPE_PLUGIN_ROOT"/*.sh; do
         [[ -f "$path" ]] || continue
@@ -69,18 +92,22 @@ plugins_command() {
       while (($#)); do
         case "$1" in
           --name)
+            require_option_argument "$@"
             name="$2"
             shift 2
             ;;
           --target)
+            require_option_argument "$@"
             target="$2"
             shift 2
             ;;
           --request-rate | --rate)
+            require_option_argument "$@"
             request_rate="$2"
             shift 2
             ;;
           --scope-file)
+            require_option_argument "$@"
             # Read by core authorization functions.
             # shellcheck disable=SC2034
             AEGISCOPE_SCOPE_FILE="$2"
@@ -91,6 +118,7 @@ plugins_command() {
             shift
             ;;
           -h | --help)
+            (($# == 1)) || die "unknown plugins run option: $2"
             plugins_usage
             return 0
             ;;
@@ -101,6 +129,7 @@ plugins_command() {
       validate_rate "$request_rate"
       authorize_target "$target" "$authorized"
       plugin_load "$name"
+      path="$(plugin_path "$name")"
       aegis_plugin_check || die "plugin dependency check failed: $name"
       create_run "$target" "plugin-${name}"
       AEGIS_PLUGIN_COMMAND=()
@@ -113,7 +142,7 @@ plugins_command() {
       display="$(sensitive_command_string "${AEGIS_PLUGIN_COMMAND[@]}")"
       RUN_COMMANDS+=("$display")
       started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-      aegis_plugin_execute "$target" "$RUN_DIR" "$request_rate" || execution_status=$?
+      plugin_execute_bounded "$path" "$target" "$RUN_DIR" "$request_rate" || execution_status=$?
       completed="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
       record_execution "$display" "" "$started" "$completed" "$execution_status"
       ((execution_status == 0)) || status=$execution_status
@@ -131,7 +160,10 @@ plugins_command() {
       write_manifest "$status"
       return "$status"
       ;;
-    -h | --help) plugins_usage ;;
+    -h | --help)
+      (($# == 0)) || die "unknown plugins option: $1"
+      plugins_usage
+      ;;
     *) die "unknown plugins action: $action" ;;
   esac
 }
